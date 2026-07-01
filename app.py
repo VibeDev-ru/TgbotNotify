@@ -319,17 +319,28 @@ user_data = {}
 @bot.message_handler(commands=['start'])
 def start_command(message):
     user_id = message.from_user.id
+    
+    # ===== ПОЛНЫЙ СБРОС СОСТОЯНИЯ ПОЛЬЗОВАТЕЛЯ =====
+    # 1. Очищаем временные данные
     if user_id in user_data:
         del user_data[user_id]
     
+    # 2. Сбрасываем кэш подписки (чтобы проверить свежий статус)
+    if user_id in subscription_cache:
+        del subscription_cache[user_id]
+    
+    # 3. Инициализируем БД (если её нет)
     init_db()
     
+    # 4. Проверяем подписку
     if check_subscription(user_id):
         bot.send_message(
             user_id,
+            "✅ **Бот перезапущен!**\n\n"
             "👋 Привет! Я бот-напоминалка-спамер!\n\n"
             "Я помогу тебе не забыть о важных делах.\n"
             "Используй кнопки ниже для управления:",
+            parse_mode='Markdown',
             reply_markup=get_main_keyboard()
         )
     else:
