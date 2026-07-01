@@ -11,7 +11,7 @@ import pytz
 import sqlite3
 
 # ====================================================
-# 1. ПРОВЕРКА И УСТАНОВКА ЗАВИСИМОСТЕЙ
+# 1. ПРОВЕРКА УСТАНОВКИ ЗАВИСИМОСТЕЙ
 # ====================================================
 print("📦 Проверяю установку зависимостей...")
 try:
@@ -27,168 +27,36 @@ import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 
 # ====================================================
-# 2. БЕЗОПАСНОЕ ЧТЕНИЕ ТОКЕНА
+# 2. ТОКЕН (ЖЁСТКО ЗАДАН)
 # ====================================================
-def clean_token(token):
-    """Полностью очищает токен от любых скрытых символов"""
-    if not token:
-        return None
-    # Удаляем все пробелы, переносы, табуляции
-    token = ''.join(token.split())
-    # Удаляем кавычки
-    token = token.strip('"\'')
-    # Оставляем только допустимые символы
-    import re
-    token = re.sub(r'[^a-zA-Z0-9:_-]', '', token)
-    return token
+# ВАЖНО: Токен должен быть БЕЗ пробелов и лишних символов!
+TELEGRAM_TOKEN = "8736477830:AAHeUPivnjQqnEhEqILir1_iwBFGm1232gM"
 
-TELEGRAM_TOKEN = None
-
-# 1. Из переменной окружения
-TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
-if TELEGRAM_TOKEN:
-    TELEGRAM_TOKEN = clean_token(TELEGRAM_TOKEN)
-    print("✅ Токен найден в переменной окружения")
-
-# 2. Из секретных файлов
-if not TELEGRAM_TOKEN:
-    secret_paths = ['/etc/secrets/.env', '/etc/secrets/token.txt', '/etc/secrets/TOKEN']
-    for path in secret_paths:
-        try:
-            with open(path, 'r') as f:
-                content = f.read().replace('\r', '').replace('\n', '').replace('\t', '')
-                if 'TELEGRAM_TOKEN' in content:
-                    for part in content.split(';'):
-                        if 'TELEGRAM_TOKEN' in part:
-                            TELEGRAM_TOKEN = part.split('=', 1)[1] if '=' in part else part
-                            break
-                elif content:
-                    TELEGRAM_TOKEN = content
-                if TELEGRAM_TOKEN:
-                    TELEGRAM_TOKEN = clean_token(TELEGRAM_TOKEN)
-                    print(f"✅ Токен найден в {path}")
-                    break
-        except:
-            pass
-
-if not TELEGRAM_TOKEN:
-    print("❌ ТОКЕН НЕ НАЙДЕН!")
-    raise RuntimeError("TELEGRAM_TOKEN не найден")
-
+# Очистка на всякий случай
+TELEGRAM_TOKEN = ''.join(TELEGRAM_TOKEN.split())
 print(f"✅ Токен загружен: {TELEGRAM_TOKEN[:10]}... (длина: {len(TELEGRAM_TOKEN)})")
 
 # ====================================================
-# 3. ЧТЕНИЕ CHANNEL_ID
+# 3. ПРОВЕРКА ТОКЕНА (важно!)
 # ====================================================
-CHANNEL_ID = os.environ.get('CHANNEL_ID', '@VibeDev_rus')
-print(f"📢 Канал: {CHANNEL_ID}")
+try:
+    test_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getMe"
+    test_response = requests.get(test_url, timeout=5)
+    if test_response.status_code == 200:
+        print(f"✅ Токен рабочий! Бот: {test_response.json().get('result', {}).get('username')}")
+    else:
+        print(f"❌ Токен НЕ РАБОТАЕТ! Статус: {test_response.status_code}")
+        print(f"❌ Ответ: {test_response.text}")
+        sys.exit(1)
+except Exception as e:
+    print(f"❌ Ошибка проверки токена: {e}")
+    sys.exit(1)
 
 # ====================================================
-# 4. БАЗА ДАННЫХ
+# 4. НАСТРОЙКИ
 # ====================================================
+CHANNEL_ID = "@VibeDev_rus"
 DB_NAME = "reminders.db"
-
-def init_db():
-    try:
-        conn = sqlite3.connect(DB_NAME)
-        c = conn.cursor()
-        c.execute('''CREATE TABLE IF NOT EXISTS reminders (
-                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                     user_id INTEGER,
-                     reminder_time TEXT,
-                     text TEXT,
-                     spam_interval INTEGER,
-                     is_done BOOLEAN DEFAULT 0,
-                     last_spam_time TEXT,
-                     repeat_type TEXT DEFAULT 'none',
-                     timezone TEXT DEFAULT 'Europe/Moscow'
-                  )''')
-        conn.commit()
-        conn.close()
-        print("✅ База данных инициализирована")
-        return True
-    except Exception as e:
-        print(f"❌ Ошибка БД: {e}")
-        return False
-
-def add_reminder(user_id, reminder_time, text, spam_interval, repeat_type, timezone):
-    try:
-        conn = sqlite3.connect(DB_NAME)
-        c = conn.cursor()
-        c.execute("""INSERT INTO reminders 
-                     (user_id, reminder_time, text, spam_interval, last_spam_time, repeat_type, timezone) 
-                     VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                  (user_id, reminder_time, text, spam_interval, 
-                   datetime.now().strftime("%Y-%m-%d %H:%M:%S"), repeat_type, timezone))
-        conn.commit()
-        conn.close()
-        return True
-    except Exception as e:
-        print(f"❌ Ошибка добавления: {e}")
-        return False
-
-def get_active_reminders():
-    try:
-        conn = sqlite3.connect(DB_NAME)
-        c = conn.cursor()
-        now = datetime.now().strftime("%Y-%m-%d %H:%M")
-        c.execute("""SELECT id, user_id, text, spam_interval, last_spam_time, repeat_type, timezone, reminder_time
-                     FROM reminders WHERE reminder_time <= ? AND is_done = 0""", (now,))
-        rows = c.fetchall()
-        conn.close()
-        return rows
-    except Exception as e:
-        print(f"❌ Ошибка получения: {e}")
-        return []
-
-def mark_reminder_done(reminder_id):
-    try:
-        conn = sqlite3.connect(DB_NAME)
-        c = conn.cursor()
-        c.execute("UPDATE reminders SET is_done = 1 WHERE id = ?", (reminder_id,))
-        conn.commit()
-        conn.close()
-        return True
-    except Exception as e:
-        print(f"❌ Ошибка: {e}")
-        return False
-
-def update_last_spam_time(reminder_id):
-    try:
-        conn = sqlite3.connect(DB_NAME)
-        c = conn.cursor()
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        c.execute("UPDATE reminders SET last_spam_time = ? WHERE id = ?", (now, reminder_id))
-        conn.commit()
-        conn.close()
-        return True
-    except Exception as e:
-        print(f"❌ Ошибка: {e}")
-        return False
-
-def get_user_reminders(user_id):
-    try:
-        conn = sqlite3.connect(DB_NAME)
-        c = conn.cursor()
-        c.execute("SELECT id, reminder_time, text, spam_interval, repeat_type, timezone FROM reminders WHERE user_id = ? AND is_done = 0", (user_id,))
-        rows = c.fetchall()
-        conn.close()
-        return rows
-    except Exception as e:
-        print(f"❌ Ошибка: {e}")
-        return []
-
-def delete_reminder(reminder_id, user_id):
-    try:
-        conn = sqlite3.connect(DB_NAME)
-        c = conn.cursor()
-        c.execute("DELETE FROM reminders WHERE id = ? AND user_id = ?", (reminder_id, user_id))
-        conn.commit()
-        conn.close()
-        return True
-    except Exception as e:
-        print(f"❌ Ошибка: {e}")
-        return False
 
 # ====================================================
 # 5. СОЗДАЁМ БОТА
@@ -196,17 +64,9 @@ def delete_reminder(reminder_id, user_id):
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
 # ====================================================
-# 6. ВСЕ ОСТАЛЬНЫЕ ФУНКЦИИ (клавиатуры, обработчики, спамер)
-# ====================================================
-# [ЗДЕСЬ ВСЕ ТВОИ ФУНКЦИИ - КЛАВИАТУРЫ, ОБРАБОТЧИКИ, СПАМЕР]
-# (оставь их без изменений, они не влияют на чтение токена)
-
-
-# ====================================================
-# 6. ФУНКЦИИ БАЗЫ ДАННЫХ
+# 6. БАЗА ДАННЫХ
 # ====================================================
 def init_db():
-    """Создаёт таблицу в базе данных, если её нет"""
     try:
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
@@ -230,7 +90,6 @@ def init_db():
         return False
 
 def add_reminder(user_id, reminder_time, text, spam_interval, repeat_type, timezone):
-    """Добавляет новое напоминание в базу данных"""
     try:
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
@@ -247,7 +106,6 @@ def add_reminder(user_id, reminder_time, text, spam_interval, repeat_type, timez
         return False
 
 def get_active_reminders():
-    """Получает все активные (не выполненные) напоминания, время которых уже наступило"""
     try:
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
@@ -262,7 +120,6 @@ def get_active_reminders():
         return []
 
 def mark_reminder_done(reminder_id):
-    """Отмечает напоминание как выполненное"""
     try:
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
@@ -275,7 +132,6 @@ def mark_reminder_done(reminder_id):
         return False
 
 def update_last_spam_time(reminder_id):
-    """Обновляет время последнего отправленного спама"""
     try:
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
@@ -289,7 +145,6 @@ def update_last_spam_time(reminder_id):
         return False
 
 def get_user_reminders(user_id):
-    """Получает все активные напоминания пользователя"""
     try:
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
@@ -302,7 +157,6 @@ def get_user_reminders(user_id):
         return []
 
 def delete_reminder(reminder_id, user_id):
-    """Удаляет напоминание"""
     try:
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
@@ -330,15 +184,10 @@ TIMEZONES = {
 }
 
 def parse_timezone(tz_text):
-    """Парсит текстовое представление часового пояса"""
     tz_text = tz_text.strip().upper()
-    
-    # Проверяем по словарю
     for key, value in TIMEZONES.items():
         if key in tz_text:
             return value
-    
-    # Проверяем UTC+XX или UTC-XX
     utc_match = re.search(r'UTC([+-])(\d+)', tz_text)
     if utc_match:
         sign = utc_match.group(1)
@@ -349,8 +198,6 @@ def parse_timezone(tz_text):
             return f'Etc/GMT-{hours}'
         else:
             return f'Etc/GMT+{hours}'
-    
-    # Проверяем просто +4 или -4
     simple_match = re.search(r'([+-])(\d+)', tz_text)
     if simple_match:
         sign = simple_match.group(1)
@@ -361,35 +208,19 @@ def parse_timezone(tz_text):
             return f'Etc/GMT-{hours}'
         else:
             return f'Etc/GMT+{hours}'
-    
     return None
 
 def parse_custom_datetime(date_str, timezone_str='Europe/Moscow'):
-    """Парсит дату в формате 'ДД ММ ГГ ЧЧ ММ'"""
     try:
         parts = date_str.strip().split()
         if len(parts) != 5:
             return None, "Нужно: ДД ММ ГГ ЧЧ ММ"
-        
         day, month, year, hour, minute = parts
         if not (day.isdigit() and month.isdigit() and year.isdigit() and hour.isdigit() and minute.isdigit()):
             return None, "Все значения должны быть числами!"
-        
-        day = int(day)
-        month = int(month)
-        year = int(year) + 2000
-        hour = int(hour)
-        minute = int(minute)
-        
-        if not (1 <= day <= 31):
-            return None, "День должен быть от 1 до 31"
-        if not (1 <= month <= 12):
-            return None, "Месяц должен быть от 1 до 12"
-        if not (0 <= hour <= 23):
-            return None, "Час должен быть от 0 до 23"
-        if not (0 <= minute <= 59):
-            return None, "Минуты должны быть от 0 до 59"
-        
+        day = int(day); month = int(month); year = int(year) + 2000; hour = int(hour); minute = int(minute)
+        if not (1 <= day <= 31) or not (1 <= month <= 12) or not (0 <= hour <= 23) or not (0 <= minute <= 59):
+            return None, "Неверные значения!"
         dt = datetime(year, month, day, hour, minute)
         tz = pytz.timezone(timezone_str)
         dt_with_tz = tz.localize(dt)
@@ -402,7 +233,6 @@ def parse_custom_datetime(date_str, timezone_str='Europe/Moscow'):
 # 8. КЛАВИАТУРЫ
 # ====================================================
 def get_main_keyboard():
-    """Главное меню с 4 кнопками"""
     keyboard = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     keyboard.add(
         KeyboardButton("➕ Новая напоминалка"),
@@ -415,20 +245,17 @@ def get_main_keyboard():
     return keyboard
 
 def get_subscribe_keyboard():
-    """Клавиатура для подписки на канал"""
     keyboard = InlineKeyboardMarkup(row_width=1)
     keyboard.add(InlineKeyboardButton("📢 Подписаться на канал", url="https://t.me/VibeDev_rus"))
     keyboard.add(InlineKeyboardButton("✅ Проверить подписку", callback_data="check_subscription"))
     return keyboard
 
 def get_cancel_keyboard():
-    """Клавиатура с кнопкой отмены"""
     keyboard = ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
     keyboard.add(KeyboardButton("❌ Отменить создание"))
     return keyboard
 
 def get_timezone_keyboard():
-    """Клавиатура выбора часового пояса"""
     keyboard = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True, row_width=2)
     keyboard.add(KeyboardButton("МСК (UTC+3)"), KeyboardButton("ЕКБ (UTC+5)"), KeyboardButton("НСК (UTC+7)"))
     keyboard.add(KeyboardButton("КРАС (UTC+7)"), KeyboardButton("ИРК (UTC+8)"), KeyboardButton("ВЛД (UTC+10)"))
@@ -437,14 +264,12 @@ def get_timezone_keyboard():
     return keyboard
 
 def get_interval_keyboard():
-    """Клавиатура выбора интервала спама"""
     keyboard = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True, row_width=3)
     keyboard.add(KeyboardButton("1 минута"), KeyboardButton("5 минут"), KeyboardButton("10 минут"))
     keyboard.add(KeyboardButton("30 минут"), KeyboardButton("1 час"), KeyboardButton("❌ Отменить создание"))
     return keyboard
 
 def get_repeat_type_keyboard():
-    """Клавиатура выбора типа повторения"""
     keyboard = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True, row_width=2)
     keyboard.add(KeyboardButton("📆 Каждый месяц"), KeyboardButton("📅 Каждую неделю"))
     keyboard.add(KeyboardButton("🔄 Каждый день"), KeyboardButton("❌ Не повторять"))
@@ -452,13 +277,11 @@ def get_repeat_type_keyboard():
     return keyboard
 
 def get_spam_keyboard(reminder_id):
-    """Клавиатура с кнопкой 'Прочитано' для спам-сообщений"""
     keyboard = InlineKeyboardMarkup()
     keyboard.add(InlineKeyboardButton("✅ Прочитано", callback_data=f"done_{reminder_id}"))
     return keyboard
 
 def get_repeat_keyboard(reminder_id):
-    """Клавиатура выбора продолжения повторения"""
     keyboard = InlineKeyboardMarkup(row_width=2)
     keyboard.add(
         InlineKeyboardButton("🔄 Продолжить", callback_data=f"repeat_yes_{reminder_id}"),
@@ -472,20 +295,17 @@ def get_repeat_keyboard(reminder_id):
 subscription_cache = {}
 
 def check_subscription(user_id):
-    """Проверяет, подписан ли пользователь на канал"""
     try:
         current_time = time.time()
         if user_id in subscription_cache:
             cached_status, cached_time = subscription_cache[user_id]
-            if current_time - cached_time < 10:  # Кэш на 10 секунд
+            if current_time - cached_time < 10:
                 return cached_status
-        
         try:
             status = bot.get_chat_member(CHANNEL_ID, user_id).status
             is_subscribed = status in ['member', 'administrator', 'creator']
         except:
-            is_subscribed = True  # Если не можем проверить — даём доступ
-        
+            is_subscribed = True
         subscription_cache[user_id] = (is_subscribed, current_time)
         return is_subscribed
     except:
@@ -498,7 +318,6 @@ user_data = {}
 
 @bot.message_handler(commands=['start'])
 def start_command(message):
-    """Обработчик команды /start"""
     user_id = message.from_user.id
     if user_id in user_data:
         del user_data[user_id]
@@ -526,11 +345,9 @@ def start_command(message):
 
 @bot.callback_query_handler(func=lambda call: call.data == "check_subscription")
 def handle_check_subscription(call):
-    """Обработчик кнопки 'Проверить подписку'"""
     user_id = call.from_user.id
     if user_id in subscription_cache:
         del subscription_cache[user_id]
-    
     if check_subscription(user_id):
         bot.answer_callback_query(call.id, "✅ Подписка подтверждена!")
         bot.delete_message(call.message.chat.id, call.message.message_id)
@@ -550,7 +367,6 @@ def handle_check_subscription(call):
 
 @bot.message_handler(func=lambda message: message.text == "➕ Новая напоминалка")
 def new_reminder_button(message):
-    """Обработчик кнопки 'Новая напоминалка'"""
     user_id = message.from_user.id
     if not check_subscription(user_id):
         bot.send_message(
@@ -577,7 +393,6 @@ def new_reminder_button(message):
     bot.register_next_step_handler(msg, get_timezone)
 
 def get_timezone(message):
-    """Шаг 1: Получение часового пояса"""
     user_id = message.from_user.id
     if message.text == "❌ Отменить создание":
         if user_id in user_data:
@@ -603,7 +418,6 @@ def get_timezone(message):
     bot.register_next_step_handler(msg, get_reminder_text)
 
 def get_reminder_text(message):
-    """Шаг 2: Получение названия напоминания"""
     user_id = message.from_user.id
     if message.text == "❌ Отменить создание":
         if user_id in user_data:
@@ -629,7 +443,6 @@ def get_reminder_text(message):
     bot.register_next_step_handler(msg, get_reminder_datetime)
 
 def get_reminder_datetime(message):
-    """Шаг 3: Получение даты и времени"""
     user_id = message.from_user.id
     if message.text == "❌ Отменить создание":
         if user_id in user_data:
@@ -681,7 +494,6 @@ def get_reminder_datetime(message):
     bot.register_next_step_handler(msg, get_spam_interval)
 
 def get_spam_interval(message):
-    """Шаг 4: Получение интервала спама"""
     user_id = message.from_user.id
     if message.text == "❌ Отменить создание":
         if user_id in user_data:
@@ -727,7 +539,6 @@ def get_spam_interval(message):
     bot.register_next_step_handler(msg, get_repeat_type)
 
 def get_repeat_type(message):
-    """Шаг 5: Получение типа повторения"""
     user_id = message.from_user.id
     if message.text == "❌ Отменить создание":
         if user_id in user_data:
@@ -801,7 +612,6 @@ def get_repeat_type(message):
 
 @bot.message_handler(func=lambda message: message.text == "📋 Все напоминалки")
 def list_reminders(message):
-    """Обработчик кнопки 'Все напоминалки'"""
     user_id = message.from_user.id
     if not check_subscription(user_id):
         bot.send_message(user_id, "🔒 Подпишись на канал!", reply_markup=get_subscribe_keyboard())
@@ -839,7 +649,6 @@ def list_reminders(message):
 
 @bot.message_handler(func=lambda message: message.text == "🗑️ Удалить напоминалку")
 def delete_reminder_button(message):
-    """Обработчик кнопки 'Удалить напоминалку'"""
     user_id = message.from_user.id
     if not check_subscription(user_id):
         bot.send_message(user_id, "🔒 Подпишись на канал!", reply_markup=get_subscribe_keyboard())
@@ -872,7 +681,6 @@ def delete_reminder_button(message):
 
 @bot.message_handler(func=lambda message: message.text == "❌ Отменить создание")
 def cancel_creation(message):
-    """Обработчик кнопки 'Отменить создание'"""
     user_id = message.from_user.id
     if user_id in user_data:
         del user_data[user_id]
@@ -883,7 +691,6 @@ def cancel_creation(message):
 # ====================================================
 @bot.callback_query_handler(func=lambda call: call.data.startswith("done_"))
 def handle_done(call):
-    """Обработчик кнопки 'Прочитано' в спам-сообщениях"""
     reminder_id = int(call.data.split("_")[1])
     user_id = call.from_user.id
     
@@ -934,7 +741,6 @@ def handle_done(call):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("repeat_"))
 def handle_repeat(call):
-    """Обработчик кнопок 'Продолжить' и 'Остановить' для повторяющихся напоминаний"""
     action, choice, reminder_id = call.data.split("_")
     reminder_id = int(reminder_id)
     user_id = call.from_user.id
@@ -1004,7 +810,6 @@ def handle_repeat(call):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("delete_"))
 def handle_delete_callback(call):
-    """Обработчик кнопок удаления напоминаний"""
     user_id = call.from_user.id
     
     if call.data == "delete_cancel":
@@ -1026,7 +831,6 @@ def handle_delete_callback(call):
 # 12. ФОНОВЫЙ ПОТОК ДЛЯ СПАМА
 # ====================================================
 def spam_reminders():
-    """Фоновый поток, который проверяет напоминания и отправляет спам"""
     print("🔄 Запущен поток спамера")
     while True:
         try:
@@ -1070,19 +874,19 @@ def spam_reminders():
                     except Exception as e:
                         print(f"❌ Ошибка при отправке спама: {e}")
             
-            time.sleep(30)  # Проверка каждые 30 секунд
+            time.sleep(30)
         except Exception as e:
             print(f"❌ Ошибка в spam_reminders: {e}")
             time.sleep(60)
 
 # ====================================================
-# 7. FLASK-СЕРВЕР
+# 13. FLASK-СЕРВЕР
 # ====================================================
 app = Flask(__name__)
 
 @app.route('/')
 def index():
-    return "🤖 Бот работает!"
+    return "🤖 Бот-напоминалка работает!"
 
 @app.route('/health')
 def health():
@@ -1095,27 +899,29 @@ def webhook():
         bot.process_new_updates([update])
         return "OK", 200
     except Exception as e:
-        print(f"❌ Ошибка: {e}")
+        print(f"❌ Ошибка webhook: {e}")
         return "ERROR", 500
 
 # ====================================================
-# 8. ЗАПУСК
+# 14. ЗАПУСК
 # ====================================================
 if __name__ == '__main__':
     print("✅ Все настройки загружены!")
+    
     init_db()
     
     spam_thread = threading.Thread(target=spam_reminders, daemon=True)
     spam_thread.start()
     
+    # НАСТРАИВАЕМ ВЕБХУК
     try:
         webhook_url = "https://tgbotnotify.onrender.com/webhook"
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setWebhook?url={webhook_url}"
         response = requests.get(url)
         print(f"✅ Вебхук: {response.json()}")
     except Exception as e:
-        print(f"⚠️ Ошибка вебхука: {e}")
+        print(f"⚠️ Ошибка настройки вебхука: {e}")
     
     port = int(os.environ.get('PORT', 10000))
-    print(f"🌐 Flask на порту {port}")
+    print(f"🌐 Запускаю Flask на порту {port}")
     app.run(host='0.0.0.0', port=port)
