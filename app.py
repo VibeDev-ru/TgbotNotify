@@ -1,73 +1,83 @@
-# app.py
-# Telegram anonymous complaints bot (aiogram v3) + Flask (Render friendly)
 import os
-import asyncio
+import sys
 import threading
-from flask import Flask
-from aiogram import Bot, Dispatcher
-from aiogram.filters import CommandStart
-from aiogram.types import Message
+from flask import Flask, request
 
-# ---------- Конфигурация (из переменных окружения) ----------
-TOKEN = os.environ.get("TELEGRAM_TOKEN")
-if not TOKEN:
-    raise RuntimeError("TELEGRAM_TOKEN не задан. Установите в Render Environment.")
+# ====================================================
+# ГЛАВНЫЙ ФАЙЛ ДЛЯ RENDER.COM
+# ====================================================
 
-ADMIN_CHAT = os.environ.get("ADMIN_CHAT_ID")
-if not ADMIN_CHAT:
-    raise RuntimeError("ADMIN_CHAT_ID не задан. Установите в Render Environment.")
-ADMIN_CHAT_ID = int(ADMIN_CHAT)  # пример: -1001234567890 для канала/чата
+# ПЫТАЕМСЯ ПРОЧИТАТЬ ТОКЕН ИЗ РАЗНЫХ ИСТОЧНИКОВ
+TELEGRAM_TOKEN = None
 
-# ---------- Инициализация aiogram ----------
-bot = Bot(token=TOKEN)
-dp = Dispatcher()
+# 1. Проверяем переменные окружения (обычные)
+TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
 
-# ---------- Хендлеры (перенеси сюда свою логику) ----------
-@dp.message(CommandStart())
-async def start(message: Message):
-    await message.answer(
-        "Максимально подробно опишите проблему. Чем больше информации - тем быстрее "
-        "отработают соответствующие органы! Отправьте жалобу, и я полностью передам её "
-        "анонимно администраторам. Можно оставить контакты для связи."
-    )
+# 2. Если не нашли, ищем в секретных файлах Render
+if not TELEGRAM_TOKEN:
+    secret_paths = [
+        '/etc/secrets/token.txt',
+        '/etc/secrets/TOKEN',
+        '/etc/secrets/.env'
+    ]
+    for path in secret_paths:
+        try:
+            with open(path, 'r') as f:
+                TELEGRAM_TOKEN = f.read().strip()
+                print(f"✅ Токен найден в {path}")
+                break
+        except:
+            pass
 
-@dp.message()
-async def complaint(message: Message):
-    text = message.text or "<нет текста>"
-    # пересылаем админам: только текст, без раскрытия пользователя
+# 3. Если не нашли, показываем понятную ошибку
+if not TELEGRAM_TOKEN:
+    print("❌ ТОКЕН НЕ НАЙДЕН!")
+    print("Создай Secret File с именем 'token.txt' и вставь туда токен.")
+    print("ИЛИ добавь Environment Variable 'TELEGRAM_TOKEN'.")
+    raise RuntimeError("TELEGRAM_TOKEN не найден")
+
+# Импортируем бота только после того, как токен найден
+import bot as bot_module
+
+# Обновляем токен в модуле бота
+bot_module.BOT_TOKEN = TELEGRAM_TOKEN
+bot_module.bot = bot_module.telebot.TeleBot(TELEGRAM_TOKEN)
+bot_module.CHANNEL_ID = os.environ.get('CHANNEL_ID', '@VibeDev_rus')
+
+# ======= FLASK-СЕРВЕР =======
+app = Flask(__name__)
+
+@app.route('/')
+def index():
+    return "🤖 Бот работает! Токен загружен."
+
+@app.route('/health')
+def health():
+    return "OK", 200
+
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    update = bot_module.telebot.types.Update.de_json(request.stream.read().decode('utf-8'))
+    bot_module.bot.process_new_updates([update])
+    return "OK", 200
+
+# ======= ЗАПУСК =======
+def run_bot():
     try:
-        await bot.send_message(ADMIN_CHAT_ID, f"⚠️ Юху! Кто-то настучал!:\n\n{text}")
-        await message.answer("✅ Информация отправлена! Имейте в виду - у всех ребят сейчас огромное колличество работы, не все вопросы можно решить сразу и по щелчку пальцев. Но все виновные будут наказаны. Вор будет сидеть в тюрьме. Быть добру!")
+        print("🚀 Запускаю бота...")
+        bot_module.bot.polling(none_stop=True, interval=0)
     except Exception as e:
-        # логирование (в Render видно в логах)
-        print("Ошибка при отправке в админ-чат:", e)
-        await message.answer("❗️ Не удалось отправить жалобу — попробуйте позже.")
+        print(f"❌ Ошибка бота: {e}")
 
-# ---------- Функция запуска polling (async) ----------
-async def run_bot():
-    # Запускаем polling (он блокирует текущий asyncio loop)
-    await dp.start_polling(bot)
-
-# ---------- Небольшой HTTP-сервер для Render (чтобы был открыт порт) ----------
-def run_http():
-    app = Flask(__name__)
-
-    @app.route("/")
-    def root():
-        return "Bot is running", 200
-
-    @app.route("/health")
-    def health():
-        return "OK", 200
-
-    port = int(os.environ.get("PORT", "5000"))
-    # Render требует 0.0.0.0 и порт из $PORT
-    app.run(host="0.0.0.0", port=port)
-
-# ---------- Точка входа ----------
-if __name__ == "__main__":
-    # Запускаем Flask в отдельном потоке — чтобы binding порта происходил в процессе
-    threading.Thread(target=run_http, daemon=True).start()
-
-    # Запускаем aiogram polling в основном потоке (asyncio)
-    asyncio.run(run_bot())
+if __name__ == '__main__':
+    print("✅ Токен загружен!")
+    print(f"📢 Канал: {bot_module.CHANNEL_ID}")
+    
+    # Запускаем бота в потоке
+    bot_thread = threading.Thread(target=run_bot, daemon=True)
+    bot_thread.start()
+    
+    # Запускаем веб-сервер
+    port = int(os.environ.get('PORT', 10000))
+    print(f"🌐 Запускаю Flask на порту {port}")
+    app.run(host='0.0.0.0', port=port)
