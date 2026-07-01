@@ -901,7 +901,27 @@ def webhook():
     except Exception as e:
         print(f"❌ Ошибка webhook: {e}")
         return "ERROR", 500
-
+# ====================================================
+# СЕКРЕТНАЯ КОМАНДА ДЛЯ СБРОСА БАЗЫ
+# ====================================================
+@bot.message_handler(commands=['resetdb'])
+def reset_database(message):
+    """Секретная команда для сброса БД (только для админа)"""
+    ADMIN_ID = 123456789  # ЗАМЕНИ НА СВОЙ TELEGRAM ID!
+    
+    if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ У тебя нет прав на это!")
+        return
+    
+    try:
+        os.remove(DB_NAME)
+        bot.reply_to(message, "✅ База данных удалена! Создам новую при следующем запуске.")
+        # Пересоздаём БД
+        init_db()
+        bot.send_message(message.chat.id, "✅ Новая база данных создана!")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Ошибка: {e}")
+        
 # ====================================================
 # 14. ЗАПУСК
 # ====================================================
