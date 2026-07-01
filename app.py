@@ -921,6 +921,41 @@ def reset_database(message):
         bot.send_message(message.chat.id, "✅ Новая база данных создана!")
     except Exception as e:
         bot.reply_to(message, f"❌ Ошибка: {e}")
+
+# ====================================================
+# MIDDLEWARE: ПРОВЕРКА ПОДПИСКИ ПЕРЕД КАЖДЫМ СООБЩЕНИЕМ
+# ====================================================
+@bot.message_handler(func=lambda message: True, content_types=['text'])
+def check_subscription_middleware(message):
+    user_id = message.from_user.id
+    
+    # Пропускаем команду /start (она обрабатывается отдельно)
+    if message.text and message.text.startswith('/start'):
+        return
+    
+    # Проверяем подписку
+    if not check_subscription(user_id):
+        bot.send_message(
+            user_id,
+            "🔒 **Для использования бота нужно подписаться на канал!**\n\n"
+            "Подпишись на наш канал:\n"
+            f"👉 {CHANNEL_ID}\n\n"
+            "После подписки нажми кнопку 'Проверить подписку'.",
+            parse_mode='Markdown',
+            reply_markup=get_subscribe_keyboard()
+        )
+        return
+    
+    # Если пользователь не авторизован (нет в user_data)
+    if user_id not in user_data:
+        bot.send_message(
+            user_id,
+            "👋 Привет! Я бот-напоминалка-спамер!\n\n"
+            "Я помогу тебе не забыть о важных делах.\n"
+            "Используй кнопки ниже для управления:",
+            reply_markup=get_main_keyboard()
+        )
+        return
         
 # ====================================================
 # 14. ЗАПУСК
