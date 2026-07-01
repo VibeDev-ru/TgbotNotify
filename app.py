@@ -969,25 +969,29 @@ def check_subscription_middleware(message):
         return
         
 # ====================================================
-# 14. ЗАПУСК
+# 9. ЗАПУСК
 # ====================================================
 if __name__ == '__main__':
-    print("✅ Все настройки загружены!")
-    
+    print("🚀 Запускаю бота...")
     init_db()
     
-    spam_thread = threading.Thread(target=spam_reminders, daemon=True)
-    spam_thread.start()
-    
-    # НАСТРАИВАЕМ ВЕБХУК
+    # УДАЛЯЕМ ВЕБХУК (переключаемся на polling)
     try:
-        webhook_url = "https://tgbotnotify.onrender.com/webhook"
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setWebhook?url={webhook_url}"
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteWebhook"
         response = requests.get(url)
-        print(f"✅ Вебхук: {response.json()}")
+        print(f"✅ Вебхук удалён: {response.json()}")
     except Exception as e:
-        print(f"⚠️ Ошибка настройки вебхука: {e}")
+        print(f"⚠️ Ошибка удаления вебхука: {e}")
     
+    # ЗАПУСКАЕМ БОТА В ПОТОКЕ
+    def run_bot():
+        print("🚀 Бот запущен в режиме polling!")
+        bot.polling(none_stop=True, interval=0)
+    
+    bot_thread = threading.Thread(target=run_bot, daemon=True)
+    bot_thread.start()
+    
+    # ЗАПУСКАЕМ FLASK (чтобы Render не ругался)
     port = int(os.environ.get('PORT', 10000))
     print(f"🌐 Запускаю Flask на порту {port}")
     app.run(host='0.0.0.0', port=port)
