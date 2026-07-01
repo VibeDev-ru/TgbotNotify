@@ -752,7 +752,66 @@ def spam_reminders():
         except Exception as e:
             print(f"❌ Ошибка в spam_reminders: {e}")
             time.sleep(60)
-
+# ====================================================
+# ОБРАБОТЧИК КНОПКИ "ПРОЧИТАНО"
+# ====================================================
+@bot.callback_query_handler(func=lambda call: call.data.startswith("done_"))
+def handle_done(call):
+    try:
+        reminder_id = int(call.data.split("_")[1])
+        user_id = call.from_user.id
+        
+        print(f"🔔 Нажата кнопка 'Прочитано' для напоминания #{reminder_id}")
+        
+        # Проверяем подписку
+        if not check_subscription(user_id):
+            bot.answer_callback_query(call.id, "❌ Подпишись на канал!", show_alert=True)
+            return
+        
+        # Получаем данные напоминания
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute("SELECT text, repeat_type FROM reminders WHERE id = ? AND is_done = 0", (reminder_id,))
+        result = c.fetchone()
+        conn.close()
+        
+        if not result:
+            bot.answer_callback_query(call.id, "⚠️ Напоминание уже выполнено")
+            return
+        
+        text, repeat_type = result
+        
+        # Если повторяющееся
+        if repeat_type != 'none':
+            bot.answer_callback_query(call.id, "✅ Прочитано!")
+            
+            bot.edit_message_text(
+                f"✅ ВЫПОЛНЕНО: {text}\n\n🔄 Это повторяющееся напоминание.\nПродолжить напоминать?",
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id
+            )
+            bot.send_message(
+                call.message.chat.id,
+                "Что делаем с напоминанием?",
+                reply_markup=get_repeat_keyboard(reminder_id)
+            )
+        else:
+            # Обычное напоминание
+            mark_reminder_done(reminder_id)
+            bot.answer_callback_query(call.id, "✅ Отлично!")
+            bot.edit_message_text(
+                f"✅ ВЫПОЛНЕНО: {text}",
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id
+            )
+            bot.send_message(
+                call.message.chat.id,
+                "🎉 Спам остановлен! Молодец!",
+                reply_markup=get_main_keyboard()
+            )
+    except Exception as e:
+        print(f"❌ Ошибка в handle_done: {e}")
+        bot.answer_callback_query(call.id, "❌ Ошибка", show_alert=True)
 # ====================================================
 # 13. FLASK-СЕРВЕР
 # ====================================================
