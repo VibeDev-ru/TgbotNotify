@@ -13,9 +13,6 @@ import sqlite3
 # ====================================================
 # 1. ПРОВЕРКА И УСТАНОВКА ЗАВИСИМОСТЕЙ
 # ====================================================
-# Этот блок проверяет, установлены ли все библиотеки.
-# Если нет — устанавливает их автоматически.
-# ====================================================
 print("📦 Проверяю установку зависимостей...")
 try:
     import telebot
@@ -26,92 +23,184 @@ except ImportError:
     subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"])
     print("✅ Зависимости установлены!")
 
-# Теперь импортируем всё
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 
 # ====================================================
 # 2. БЕЗОПАСНОЕ ЧТЕНИЕ ТОКЕНА
 # ====================================================
-# ЭТА ЧАСТЬ ПЫТАЕТСЯ НАЙТИ ТОКЕН В НЕСКОЛЬКИХ МЕСТАХ:
-# 1. Сначала проверяет переменные окружения (os.environ)
-# 2. Потом ищет в секретных файлах Render (/etc/secrets/)
-# 3. Удаляет все пробелы и лишние символы
-# ====================================================
+def clean_token(token):
+    """Полностью очищает токен от любых скрытых символов"""
+    if not token:
+        return None
+    # Удаляем все пробелы, переносы, табуляции
+    token = ''.join(token.split())
+    # Удаляем кавычки
+    token = token.strip('"\'')
+    # Оставляем только допустимые символы
+    import re
+    token = re.sub(r'[^a-zA-Z0-9:_-]', '', token)
+    return token
 
 TELEGRAM_TOKEN = None
 
-# 1. Пробуем из переменной окружения
+# 1. Из переменной окружения
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
 if TELEGRAM_TOKEN:
+    TELEGRAM_TOKEN = clean_token(TELEGRAM_TOKEN)
     print("✅ Токен найден в переменной окружения")
 
-# 2. Если не нашли — ищем в секретных файлах
+# 2. Из секретных файлов
 if not TELEGRAM_TOKEN:
-    secret_paths = [
-        '/etc/secrets/.env',
-        '/etc/secrets/token.txt',
-        '/etc/secrets/TOKEN'
-    ]
+    secret_paths = ['/etc/secrets/.env', '/etc/secrets/token.txt', '/etc/secrets/TOKEN']
     for path in secret_paths:
         try:
             with open(path, 'r') as f:
-                content = f.read()
-                # Ищем строку с TELEGRAM_TOKEN
-                for line in content.split('\n'):
-                    if 'TELEGRAM_TOKEN' in line:
-                        if '=' in line:
-                            TELEGRAM_TOKEN = line.split('=', 1)[1]
-                        else:
-                            TELEGRAM_TOKEN = line
-                        break
+                content = f.read().replace('\r', '').replace('\n', '').replace('\t', '')
+                if 'TELEGRAM_TOKEN' in content:
+                    for part in content.split(';'):
+                        if 'TELEGRAM_TOKEN' in part:
+                            TELEGRAM_TOKEN = part.split('=', 1)[1] if '=' in part else part
+                            break
+                elif content:
+                    TELEGRAM_TOKEN = content
                 if TELEGRAM_TOKEN:
+                    TELEGRAM_TOKEN = clean_token(TELEGRAM_TOKEN)
                     print(f"✅ Токен найден в {path}")
                     break
-        except Exception as e:
-            print(f"⚠️ Не удалось прочитать {path}: {e}")
+        except:
+            pass
 
-# 3. Очищаем от пробелов, переносов и кавычек
-if TELEGRAM_TOKEN:
-    TELEGRAM_TOKEN = ''.join(TELEGRAM_TOKEN.split())  # Удаляем все пробелы
-    TELEGRAM_TOKEN = TELEGRAM_TOKEN.strip('"\'')      # Удаляем кавычки
-    print(f"✅ Токен загружен: {TELEGRAM_TOKEN[:10]}...")
-
-# 4. Если токен не найден — завершаем работу
 if not TELEGRAM_TOKEN:
     print("❌ ТОКЕН НЕ НАЙДЕН!")
-    print("Создай Secret File с именем '.env' и содержимым:")
-    print("TELEGRAM_TOKEN=твой_токен")
     raise RuntimeError("TELEGRAM_TOKEN не найден")
+
+print(f"✅ Токен загружен: {TELEGRAM_TOKEN[:10]}... (длина: {len(TELEGRAM_TOKEN)})")
 
 # ====================================================
 # 3. ЧТЕНИЕ CHANNEL_ID
 # ====================================================
-CHANNEL_ID = os.environ.get('CHANNEL_ID')
-if not CHANNEL_ID:
-    try:
-        with open('/etc/secrets/.env', 'r') as f:
-            for line in f:
-                if 'CHANNEL_ID' in line:
-                    CHANNEL_ID = line.split('=')[1].strip().replace(' ', '')
-                    break
-    except:
-        pass
-
-if not CHANNEL_ID:
-    CHANNEL_ID = '@VibeDev_rus'
-
+CHANNEL_ID = os.environ.get('CHANNEL_ID', '@VibeDev_rus')
 print(f"📢 Канал: {CHANNEL_ID}")
 
 # ====================================================
-# 4. НАСТРОЙКИ БАЗЫ ДАННЫХ
+# 4. БАЗА ДАННЫХ
 # ====================================================
 DB_NAME = "reminders.db"
+
+def init_db():
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute('''CREATE TABLE IF NOT EXISTS reminders (
+                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     user_id INTEGER,
+                     reminder_time TEXT,
+                     text TEXT,
+                     spam_interval INTEGER,
+                     is_done BOOLEAN DEFAULT 0,
+                     last_spam_time TEXT,
+                     repeat_type TEXT DEFAULT 'none',
+                     timezone TEXT DEFAULT 'Europe/Moscow'
+                  )''')
+        conn.commit()
+        conn.close()
+        print("✅ База данных инициализирована")
+        return True
+    except Exception as e:
+        print(f"❌ Ошибка БД: {e}")
+        return False
+
+def add_reminder(user_id, reminder_time, text, spam_interval, repeat_type, timezone):
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute("""INSERT INTO reminders 
+                     (user_id, reminder_time, text, spam_interval, last_spam_time, repeat_type, timezone) 
+                     VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                  (user_id, reminder_time, text, spam_interval, 
+                   datetime.now().strftime("%Y-%m-%d %H:%M:%S"), repeat_type, timezone))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"❌ Ошибка добавления: {e}")
+        return False
+
+def get_active_reminders():
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+        c.execute("""SELECT id, user_id, text, spam_interval, last_spam_time, repeat_type, timezone, reminder_time
+                     FROM reminders WHERE reminder_time <= ? AND is_done = 0""", (now,))
+        rows = c.fetchall()
+        conn.close()
+        return rows
+    except Exception as e:
+        print(f"❌ Ошибка получения: {e}")
+        return []
+
+def mark_reminder_done(reminder_id):
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute("UPDATE reminders SET is_done = 1 WHERE id = ?", (reminder_id,))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"❌ Ошибка: {e}")
+        return False
+
+def update_last_spam_time(reminder_id):
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        c.execute("UPDATE reminders SET last_spam_time = ? WHERE id = ?", (now, reminder_id))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"❌ Ошибка: {e}")
+        return False
+
+def get_user_reminders(user_id):
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute("SELECT id, reminder_time, text, spam_interval, repeat_type, timezone FROM reminders WHERE user_id = ? AND is_done = 0", (user_id,))
+        rows = c.fetchall()
+        conn.close()
+        return rows
+    except Exception as e:
+        print(f"❌ Ошибка: {e}")
+        return []
+
+def delete_reminder(reminder_id, user_id):
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute("DELETE FROM reminders WHERE id = ? AND user_id = ?", (reminder_id, user_id))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"❌ Ошибка: {e}")
+        return False
 
 # ====================================================
 # 5. СОЗДАЁМ БОТА
 # ====================================================
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
+
+# ====================================================
+# 6. ВСЕ ОСТАЛЬНЫЕ ФУНКЦИИ (клавиатуры, обработчики, спамер)
+# ====================================================
+# [ЗДЕСЬ ВСЕ ТВОИ ФУНКЦИИ - КЛАВИАТУРЫ, ОБРАБОТЧИКИ, СПАМЕР]
+# (оставь их без изменений, они не влияют на чтение токена)
+
 
 # ====================================================
 # 6. ФУНКЦИИ БАЗЫ ДАННЫХ
@@ -987,54 +1076,46 @@ def spam_reminders():
             time.sleep(60)
 
 # ====================================================
-# 13. FLASK-СЕРВЕР
+# 7. FLASK-СЕРВЕР
 # ====================================================
 app = Flask(__name__)
 
 @app.route('/')
 def index():
-    """Главная страница для проверки работы бота"""
-    return "🤖 Бот-напоминалка работает!"
+    return "🤖 Бот работает!"
 
 @app.route('/health')
 def health():
-    """Страница для проверки здоровья (используется UptimeRobot)"""
     return "OK", 200
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    """Обработчик вебхука от Telegram"""
     try:
         update = telebot.types.Update.de_json(request.stream.read().decode('utf-8'))
         bot.process_new_updates([update])
         return "OK", 200
     except Exception as e:
-        print(f"❌ Ошибка webhook: {e}")
+        print(f"❌ Ошибка: {e}")
         return "ERROR", 500
 
 # ====================================================
-# 14. ЗАПУСК
+# 8. ЗАПУСК
 # ====================================================
 if __name__ == '__main__':
     print("✅ Все настройки загружены!")
-    
-    # Инициализируем базу данных
     init_db()
     
-    # Запускаем поток спамера
     spam_thread = threading.Thread(target=spam_reminders, daemon=True)
     spam_thread.start()
     
-    # Настраиваем вебхук
     try:
         webhook_url = "https://tgbotnotify.onrender.com/webhook"
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setWebhook?url={webhook_url}"
         response = requests.get(url)
         print(f"✅ Вебхук: {response.json()}")
     except Exception as e:
-        print(f"⚠️ Ошибка настройки вебхука: {e}")
+        print(f"⚠️ Ошибка вебхука: {e}")
     
-    # Запускаем Flask
     port = int(os.environ.get('PORT', 10000))
-    print(f"🌐 Запускаю Flask на порту {port}")
+    print(f"🌐 Flask на порту {port}")
     app.run(host='0.0.0.0', port=port)
