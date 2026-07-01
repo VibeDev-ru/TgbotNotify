@@ -28,54 +28,16 @@ import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 
 # ====================================================
+# ТОКЕН (ЖЁСТКО ЗАДАН ДЛЯ ТЕСТА)
+# ====================================================
+TELEGRAM_TOKEN = "8736477830:AAFuQ35v3BxErTpYRRcHzutiWT7g6eqybBU"
+print(f"✅ Токен загружен: {TELEGRAM_TOKEN[:10]}...")
+
+# ====================================================
 # НАСТРОЙКИ
 # ====================================================
 DB_NAME = "reminders.db"
-
-# ====================================================
-# ПОИСК ТОКЕНА
-# ====================================================
-TELEGRAM_TOKEN = None
-
-# Из переменной окружения
-TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
-
-# Из секретного файла
-if not TELEGRAM_TOKEN:
-    try:
-        with open('/etc/secrets/.env', 'r') as f:
-            content = f.read()
-            for line in content.split('\n'):
-                if 'TELEGRAM_TOKEN' in line:
-                    TELEGRAM_TOKEN = line.split('=')[1] if '=' in line else line
-                    break
-    except:
-        pass
-
-# Очистка
-if TELEGRAM_TOKEN:
-    TELEGRAM_TOKEN = ''.join(TELEGRAM_TOKEN.split())
-
-if not TELEGRAM_TOKEN:
-    raise RuntimeError("❌ Токен не найден!")
-
-print(f"✅ Токен загружен")
-
-# Читаем CHANNEL_ID
-CHANNEL_ID = os.environ.get('CHANNEL_ID')
-if not CHANNEL_ID:
-    try:
-        with open('/etc/secrets/.env', 'r') as f:
-            for line in f:
-                if 'CHANNEL_ID' in line:
-                    CHANNEL_ID = line.split('=')[1].strip().replace(' ', '')
-                    break
-    except:
-        pass
-
-if not CHANNEL_ID:
-    CHANNEL_ID = '@VibeDev_rus'
-
+CHANNEL_ID = "@VibeDev_rus"
 print(f"📢 Канал: {CHANNEL_ID}")
 
 # ====================================================
@@ -818,11 +780,6 @@ def webhook():
 # ====================================================
 # ЗАПУСК
 # ====================================================
-def run_bot():
-    print("🚀 Бот запущен!")
-    # Для вебхука не нужен polling, но оставляем как fallback
-    # bot.polling(none_stop=True, interval=0)
-
 if __name__ == '__main__':
     print("✅ Все настройки загружены!")
     
