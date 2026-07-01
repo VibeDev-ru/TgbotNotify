@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: telegram-bot-on-render
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python app.py
+    autoDeploy: true
+    envVars:
+      - key: TELEGRAM_TOKEN
+        sync: false  # set in the Render dashboard
