@@ -349,49 +349,6 @@ def start_command(message):
             reply_markup=get_subscribe_keyboard()
         )
 
-# ====================================================
-# MIDDLEWARE: ПРОВЕРКА ПОДПИСКИ (ИСПРАВЛЕННАЯ)
-# ====================================================
-@bot.message_handler(func=lambda message: True, content_types=['text'])
-def check_subscription_middleware(message):
-    user_id = message.from_user.id
-    text = message.text
-    
-    # ПРОПУСКАЕМ ВСЕ КОМАНДЫ
-    if text and text.startswith('/'):
-        return
-    
-    # ПРОПУСКАЕМ ВСЕ КНОПКИ ГЛАВНОГО МЕНЮ
-    if text in ["➕ Новая напоминалка", "📋 Все напоминалки", "🗑️ Удалить напоминалку", "❌ Отменить создание"]:
-        return
-    
-    # ПРОПУСКАЕМ ВСЕ ВАРИАНТЫ ВЫБОРА
-    if text and any(word in text for word in ["минут", "час", "месяц", "недел", "день", "повтор", "МСК", "ЕКБ", "НСК", "КРАС", "ИРК", "ВЛД", "КАМ", "КИЕВ", "МИНСК"]):
-        return
-    
-    # ПРОВЕРКА ПОДПИСКИ
-    if not check_subscription(user_id):
-        bot.send_message(
-            user_id,
-            "🔒 Для использования бота нужно подписаться на канал!\n\n"
-            "Подпишись на наш канал:\n"
-            f"👉 {CHANNEL_ID}\n\n"
-            "После подписки нажми кнопку 'Проверить подписку'.",
-            reply_markup=get_subscribe_keyboard()
-        )
-        return
-    
-    # ЕСЛИ ПОЛЬЗОВАТЕЛЬ НОВЫЙ (НЕТ В user_data)
-    if user_id not in user_data:
-        bot.send_message(
-            user_id,
-            "👋 Привет! Я бот-напоминалка-спамер!\n\n"
-            "Я помогу тебе не забыть о важных делах.\n"
-            "Используй кнопки ниже для управления:",
-            reply_markup=get_main_keyboard()
-        )
-        return
-
 @bot.callback_query_handler(func=lambda call: call.data == "check_subscription")
 def handle_check_subscription(call):
     user_id = call.from_user.id
@@ -419,6 +376,7 @@ def handle_check_subscription(call):
 @bot.message_handler(func=lambda message: message.text == "➕ Новая напоминалка")
 def new_reminder_button(message):
     user_id = message.from_user.id
+    
     if not check_subscription(user_id):
         bot.send_message(
             user_id,
@@ -434,7 +392,7 @@ def new_reminder_button(message):
     
     msg = bot.send_message(
         user_id,
-        "Шаг 1 из 5: Выберите часовой пояс\n\n"
+        "🌍 Шаг 1 из 5: Выберите часовой пояс\n\n"
         "Укажите ваш часовой пояс.\n"
         "Выберите из списка или напишите свой (например, UTC+4 или +4):",
         reply_markup=get_timezone_keyboard()
@@ -444,8 +402,14 @@ def new_reminder_button(message):
 @bot.message_handler(func=lambda message: message.text == "📋 Все напоминалки")
 def list_reminders(message):
     user_id = message.from_user.id
+    
     if not check_subscription(user_id):
-        bot.send_message(user_id, "🔒 Подпишись на канал!", reply_markup=get_subscribe_keyboard())
+        bot.send_message(
+            user_id,
+            "🔒 Подпишись на канал!\n"
+            f"👉 {CHANNEL_ID}",
+            reply_markup=get_subscribe_keyboard()
+        )
         return
     
     rows = get_user_reminders(user_id)
@@ -481,8 +445,14 @@ def list_reminders(message):
 @bot.message_handler(func=lambda message: message.text == "🗑️ Удалить напоминалку")
 def delete_reminder_button(message):
     user_id = message.from_user.id
+    
     if not check_subscription(user_id):
-        bot.send_message(user_id, "🔒 Подпишись на канал!", reply_markup=get_subscribe_keyboard())
+        bot.send_message(
+            user_id,
+            "🔒 Подпишись на канал!\n"
+            f"👉 {CHANNEL_ID}",
+            reply_markup=get_subscribe_keyboard()
+        )
         return
     
     rows = get_user_reminders(user_id)
@@ -517,140 +487,220 @@ def cancel_creation(message):
         del user_data[user_id]
     bot.send_message(user_id, "❌ Создание отменено.", reply_markup=get_main_keyboard())
 
-# ОСТАЛЬНЫЕ ФУНКЦИИ (get_timezone, get_reminder_text, get_reminder_datetime, get_spam_interval, get_repeat_type)
-# ОСТАВЬ ИХ БЕЗ ИЗМЕНЕНИЙ
 # ====================================================
-# 11. CALLBACK ОБРАБОТЧИКИ
+# ОСТАЛЬНЫЕ ОБРАБОТЧИКИ ШАГОВ
 # ====================================================
-@bot.callback_query_handler(func=lambda call: call.data.startswith("done_"))
-def handle_done(call):
-    reminder_id = int(call.data.split("_")[1])
-    user_id = call.from_user.id
-    
-    if not check_subscription(user_id):
-        bot.answer_callback_query(call.id, "❌ Подпишись на канал!", show_alert=True)
+def get_timezone(message):
+    user_id = message.from_user.id
+    if message.text == "❌ Отменить создание":
+        if user_id in user_data:
+            del user_data[user_id]
+        bot.send_message(user_id, "❌ Создание отменено.", reply_markup=get_main_keyboard())
         return
     
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute("SELECT text, repeat_type FROM reminders WHERE id = ? AND is_done = 0", (reminder_id,))
-    result = c.fetchone()
-    conn.close()
-    
-    if result:
-        text, repeat_type = result
-        if repeat_type != 'none':
-            bot.answer_callback_query(call.id, "✅ Прочитано!")
-            bot.edit_message_text(
-                f"✅ ВЫПОЛНЕНО: {text}\n\n"
-                f"🔄 Это повторяющееся напоминание.\n"
-                f"Продолжить напоминать?",
-                chat_id=call.message.chat.id,
-                message_id=call.message.message_id
-            )
-            bot.send_message(
-                call.message.chat.id,
-                "Что делаем с напоминанием?",
-                reply_markup=get_repeat_keyboard(reminder_id)
-            )
-        else:
-            mark_reminder_done(reminder_id)
-            bot.answer_callback_query(call.id, "✅ Отлично!")
-            bot.edit_message_text(
-                f"✅ ВЫПОЛНЕНО: {text}",
-                chat_id=call.message.chat.id,
-                message_id=call.message.message_id
-            )
-            bot.send_message(call.message.chat.id, "🎉 Спам остановлен! Молодец!", reply_markup=get_main_keyboard())
+    tz_found = parse_timezone(message.text)
+    if not tz_found:
+        tz_found = 'Europe/Moscow'
+        bot.send_message(user_id, "❌ Не понял часовой пояс. Использую МСК (UTC+3) по умолчанию.")
     else:
-        bot.answer_callback_query(call.id, "⚠️ Напоминание уже выполнено")
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("repeat_"))
-def handle_repeat(call):
-    action, choice, reminder_id = call.data.split("_")
-    reminder_id = int(reminder_id)
-    user_id = call.from_user.id
+        bot.send_message(user_id, f"✅ Часовой пояс установлен: {tz_found}")
     
-    if choice == "yes":
-        bot.answer_callback_query(call.id, "🔄 Продолжаю!")
-        bot.delete_message(call.message.chat.id, call.message.message_id)
-        
-        conn = sqlite3.connect(DB_NAME)
-        c = conn.cursor()
-        c.execute("SELECT user_id, text, spam_interval, reminder_time, repeat_type, timezone FROM reminders WHERE id = ?", (reminder_id,))
-        result = c.fetchone()
-        
-        if result:
-            user_id, text, spam_interval, reminder_time, repeat_type, timezone = result
-            tz = pytz.timezone(timezone)
-            dt_utc = datetime.strptime(reminder_time, "%Y-%m-%d %H:%M")
-            dt_utc = dt_utc.replace(tzinfo=pytz.UTC)
-            dt_local = dt_utc.astimezone(tz)
-            
-            if repeat_type == 'daily':
-                next_dt = dt_local + timedelta(days=1)
-            elif repeat_type == 'weekly':
-                next_dt = dt_local + timedelta(weeks=1)
-            elif repeat_type == 'monthly':
-                if dt_local.month == 12:
-                    next_dt = dt_local.replace(year=dt_local.year + 1, month=1)
-                else:
-                    next_dt = dt_local.replace(month=dt_local.month + 1)
-            else:
-                conn.close()
-                return
-            
-            next_dt_utc = next_dt.astimezone(pytz.UTC)
-            next_time = next_dt_utc.replace(tzinfo=None).strftime("%Y-%m-%d %H:%M")
-            
-            c.execute("""INSERT INTO reminders 
-                         (user_id, reminder_time, text, spam_interval, last_spam_time, repeat_type, timezone) 
-                         VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                      (user_id, next_time, text, spam_interval, 
-                       datetime.now().strftime("%Y-%m-%d %H:%M:%S"), repeat_type, timezone))
-            c.execute("UPDATE reminders SET is_done = 1 WHERE id = ?", (reminder_id,))
-            conn.commit()
-            
-            repeat_names = {
-                'daily': 'каждый день',
-                'weekly': 'каждую неделю',
-                'monthly': 'каждый месяц'
-            }
-            
+    user_data[user_id]['timezone'] = tz_found
+    msg = bot.send_message(
+        user_id,
+        "📝 Шаг 2 из 5: Введите название напоминания\n\n"
+        "Например: Купить молоко или Позвонить маме",
+        reply_markup=get_cancel_keyboard()
+    )
+    bot.register_next_step_handler(msg, get_reminder_text)
+
+def get_reminder_text(message):
+    user_id = message.from_user.id
+    if message.text == "❌ Отменить создание":
+        if user_id in user_data:
+            del user_data[user_id]
+        bot.send_message(user_id, "❌ Создание отменено.", reply_markup=get_main_keyboard())
+        return
+    
+    if len(message.text.strip()) < 1:
+        msg = bot.send_message(user_id, "❌ Название не может быть пустым. Попробуй еще раз:", reply_markup=get_cancel_keyboard())
+        bot.register_next_step_handler(msg, get_reminder_text)
+        return
+    
+    user_data[user_id]['text'] = message.text.strip()
+    msg = bot.send_message(
+        user_id,
+        "📅 Шаг 3 из 5: Введите дату и время\n\n"
+        "В формате: ДД ММ ГГ ЧЧ ММ\n"
+        "Например: 03 07 26 15 30 (3 июля 2026, 15:30)\n\n"
+        "⚠️ Время должно быть в будущем!",
+        reply_markup=get_cancel_keyboard()
+    )
+    bot.register_next_step_handler(msg, get_reminder_datetime)
+
+def get_reminder_datetime(message):
+    user_id = message.from_user.id
+    if message.text == "❌ Отменить создание":
+        if user_id in user_data:
+            del user_data[user_id]
+        bot.send_message(user_id, "❌ Создание отменено.", reply_markup=get_main_keyboard())
+        return
+    
+    timezone = user_data[user_id].get('timezone', 'Europe/Moscow')
+    dt_utc, error = parse_custom_datetime(message.text, timezone)
+    
+    if error:
+        msg = bot.send_message(
+            user_id,
+            f"❌ {error}\n\nПопробуй еще раз в формате: ДД ММ ГГ ЧЧ ММ",
+            reply_markup=get_cancel_keyboard()
+        )
+        bot.register_next_step_handler(msg, get_reminder_datetime)
+        return
+    
+    now_utc = datetime.now(pytz.UTC).replace(tzinfo=None)
+    if dt_utc <= now_utc:
+        msg = bot.send_message(
+            user_id,
+            "❌ Нельзя установить напоминание в прошлом!\n\nВведите дату и время в будущем:",
+            reply_markup=get_cancel_keyboard()
+        )
+        bot.register_next_step_handler(msg, get_reminder_datetime)
+        return
+    
+    user_data[user_id]['datetime_utc'] = dt_utc.strftime("%Y-%m-%d %H:%M")
+    
+    tz = pytz.timezone(timezone)
+    dt_local = dt_utc.replace(tzinfo=pytz.UTC).astimezone(tz)
+    bot.send_message(
+        user_id,
+        f"✅ Время сохранено!\n"
+        f"📅 Ваше время: {dt_local.strftime('%d.%m.%Y %H:%M')}"
+    )
+    
+    msg = bot.send_message(
+        user_id,
+        "⏱️ Шаг 4 из 5: Выберите интервал спама\n\n"
+        "Как часто я должен напоминать тебе?\n"
+        "Выбери вариант ниже или напиши число в минутах:",
+        reply_markup=get_interval_keyboard()
+    )
+    bot.register_next_step_handler(msg, get_spam_interval)
+
+def get_spam_interval(message):
+    user_id = message.from_user.id
+    if message.text == "❌ Отменить создание":
+        if user_id in user_data:
+            del user_data[user_id]
+        bot.send_message(user_id, "❌ Создание отменено.", reply_markup=get_main_keyboard())
+        return
+    
+    interval_map = {
+        '1 минута': 60, '5 минут': 300, '10 минут': 600,
+        '30 минут': 1800, '1 час': 3600
+    }
+    interval_text = message.text.strip().lower()
+    
+    if interval_text in interval_map:
+        spam_interval = interval_map[interval_text]
+    else:
+        try:
+            minutes = int(interval_text)
+            spam_interval = max(60, minutes * 60)
+        except:
             bot.send_message(
                 user_id,
-                f"🔄 Напоминание продлено!\n\n"
-                f"📝 Текст: {text}\n"
-                f"📅 Следующее: {next_dt.strftime('%d.%m.%Y %H:%M')}\n"
-                f"📆 Тип повторения: {repeat_names.get(repeat_type, repeat_type)}\n"
-                f"⏱️ Интервал спама: {spam_interval // 60} минут",
-                reply_markup=get_main_keyboard()
+                "❌ Не понял интервал. Используй кнопки или напиши число в минутах.\n\nПопробуй еще раз:",
+                reply_markup=get_interval_keyboard()
             )
-        conn.close()
-    else:
-        mark_reminder_done(reminder_id)
-        bot.answer_callback_query(call.id, "⏹️ Повтор остановлен!")
-        bot.delete_message(call.message.chat.id, call.message.message_id)
-        bot.send_message(user_id, "✅ Повтор остановлен. Напоминание больше не будет приходить.", reply_markup=get_main_keyboard())
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("delete_"))
-def handle_delete_callback(call):
-    user_id = call.from_user.id
+            bot.register_next_step_handler(message, get_spam_interval)
+            return
     
-    if call.data == "delete_cancel":
-        bot.answer_callback_query(call.id, "Отмена")
-        bot.delete_message(call.message.chat.id, call.message.message_id)
-        bot.send_message(user_id, "❌ Удаление отменено.", reply_markup=get_main_keyboard())
+    user_data[user_id]['interval'] = spam_interval
+    bot.send_message(user_id, "✅ Отлично!", reply_markup=telebot.types.ReplyKeyboardRemove())
+    
+    msg = bot.send_message(
+        user_id,
+        "🔄 Шаг 5 из 5: Выберите тип повторения\n\n"
+        "Как часто нужно повторять это напоминание?\n\n"
+        "📆 Каждый месяц - в это же число, в это же время\n"
+        "📅 Каждую неделю - в этот же день недели, в это же время\n"
+        "🔄 Каждый день - каждый день в это же время\n"
+        "❌ Не повторять - только один раз",
+        reply_markup=get_repeat_type_keyboard()
+    )
+    bot.register_next_step_handler(msg, get_repeat_type)
+
+def get_repeat_type(message):
+    user_id = message.from_user.id
+    if message.text == "❌ Отменить создание":
+        if user_id in user_data:
+            del user_data[user_id]
+        bot.send_message(user_id, "❌ Создание отменено.", reply_markup=get_main_keyboard())
         return
     
-    reminder_id = int(call.data.split("_")[1])
+    choice = message.text.strip().lower()
+    repeat_type = 'none'
+    repeat_name = 'не повторять'
     
-    if delete_reminder(reminder_id, user_id):
-        bot.answer_callback_query(call.id, "✅ Удалено!")
-        bot.delete_message(call.message.chat.id, call.message.message_id)
-        bot.send_message(user_id, "🗑️ Напоминание удалено.", reply_markup=get_main_keyboard())
+    if 'месяц' in choice or 'ежемесяч' in choice:
+        repeat_type = 'monthly'
+        repeat_name = 'каждый месяц'
+    elif 'недел' in choice or 'еженедел' in choice:
+        repeat_type = 'weekly'
+        repeat_name = 'каждую неделю'
+    elif 'день' in choice or 'ежеднев' in choice:
+        repeat_type = 'daily'
+        repeat_name = 'каждый день'
+    elif 'не повтор' in choice or 'один раз' in choice or 'нет' in choice:
+        repeat_type = 'none'
+        repeat_name = 'не повторять'
     else:
-        bot.answer_callback_query(call.id, "⚠️ Ошибка при удалении")
+        bot.send_message(
+            user_id,
+            "❌ Не понял. Выбери один из вариантов:",
+            reply_markup=get_repeat_type_keyboard()
+        )
+        bot.register_next_step_handler(message, get_repeat_type)
+        return
+    
+    bot.send_message(user_id, f"✅ Выбрано: {repeat_name}", reply_markup=telebot.types.ReplyKeyboardRemove())
+    
+    add_reminder(
+        user_id,
+        user_data[user_id]['datetime_utc'],
+        user_data[user_id]['text'],
+        user_data[user_id]['interval'],
+        repeat_type,
+        user_data[user_id]['timezone']
+    )
+    
+    minutes = user_data[user_id]['interval'] // 60
+    tz = pytz.timezone(user_data[user_id]['timezone'])
+    dt_utc = datetime.strptime(user_data[user_id]['datetime_utc'], "%Y-%m-%d %H:%M")
+    dt_utc = dt_utc.replace(tzinfo=pytz.UTC)
+    dt_local = dt_utc.astimezone(tz)
+    
+    repeat_names = {
+        'daily': '🔄 Каждый день',
+        'weekly': '📅 Каждую неделю',
+        'monthly': '📆 Каждый месяц',
+        'none': '❌ Не повторять'
+    }
+    
+    bot.send_message(
+        user_id,
+        f"✅ Напоминание создано!\n\n"
+        f"📝 Текст: {user_data[user_id]['text']}\n"
+        f"📅 Дата и время: {dt_local.strftime('%d.%m.%Y %H:%M')}\n"
+        f"⏱️ Интервал спама: {minutes} минут(ы)\n"
+        f"🔄 Повторение: {repeat_names.get(repeat_type, 'Не повторять')}\n"
+        f"🌍 Часовой пояс: {user_data[user_id]['timezone']}\n\n"
+        f"В назначенное время я начну спамить тебе, пока ты не нажмешь кнопку 'Прочитано'.",
+        reply_markup=get_main_keyboard()
+    )
+    
+    del user_data[user_id]
 
 # ====================================================
 # 12. ФОНОВЫЙ ПОТОК ДЛЯ СПАМА
