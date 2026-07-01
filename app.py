@@ -27,17 +27,14 @@ import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 
 # ====================================================
-# 2. ТОКЕН (ЖЁСТКО ЗАДАН)
+# 2. ТОКЕН
 # ====================================================
-# ВАЖНО: Токен должен быть БЕЗ пробелов и лишних символов!
 TELEGRAM_TOKEN = "8736477830:AAHeUPivnjQqnEhEqILir1_iwBFGm1232gM"
-
-# Очистка на всякий случай
 TELEGRAM_TOKEN = ''.join(TELEGRAM_TOKEN.split())
 print(f"✅ Токен загружен: {TELEGRAM_TOKEN[:10]}... (длина: {len(TELEGRAM_TOKEN)})")
 
 # ====================================================
-# 3. ПРОВЕРКА ТОКЕНА (важно!)
+# 3. ПРОВЕРКА ТОКЕНА
 # ====================================================
 try:
     test_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getMe"
@@ -45,8 +42,7 @@ try:
     if test_response.status_code == 200:
         print(f"✅ Токен рабочий! Бот: {test_response.json().get('result', {}).get('username')}")
     else:
-        print(f"❌ Токен НЕ РАБОТАЕТ! Статус: {test_response.status_code}")
-        print(f"❌ Ответ: {test_response.text}")
+        print(f"❌ Токен НЕ РАБОТАЕТ!")
         sys.exit(1)
 except Exception as e:
     print(f"❌ Ошибка проверки токена: {e}")
@@ -218,7 +214,11 @@ def parse_custom_datetime(date_str, timezone_str='Europe/Moscow'):
         day, month, year, hour, minute = parts
         if not (day.isdigit() and month.isdigit() and year.isdigit() and hour.isdigit() and minute.isdigit()):
             return None, "Все значения должны быть числами!"
-        day = int(day); month = int(month); year = int(year) + 2000; hour = int(hour); minute = int(minute)
+        day = int(day)
+        month = int(month)
+        year = int(year) + 2000
+        hour = int(hour)
+        minute = int(minute)
         if not (1 <= day <= 31) or not (1 <= month <= 12) or not (0 <= hour <= 23) or not (0 <= minute <= 59):
             return None, "Неверные значения!"
         dt = datetime(year, month, day, hour, minute)
@@ -299,17 +299,20 @@ def check_subscription(user_id):
         current_time = time.time()
         if user_id in subscription_cache:
             cached_status, cached_time = subscription_cache[user_id]
-            if current_time - cached_time < 10:
+            if current_time - cached_time < 60:
                 return cached_status
         try:
-            status = bot.get_chat_member(CHANNEL_ID, user_id).status
-            is_subscribed = status in ['member', 'administrator', 'creator']
-        except:
-            is_subscribed = True
+            chat_member = bot.get_chat_member(CHANNEL_ID, user_id)
+            is_subscribed = chat_member.status in ['member', 'administrator', 'creator']
+            print(f"🔍 Проверка подписки {user_id}: {is_subscribed} (статус: {chat_member.status})")
+        except Exception as e:
+            print(f"⚠️ Ошибка API для {user_id}: {e}")
+            is_subscribed = False
         subscription_cache[user_id] = (is_subscribed, current_time)
         return is_subscribed
-    except:
-        return True
+    except Exception as e:
+        print(f"❌ Критическая ошибка проверки: {e}")
+        return False
 
 # ====================================================
 # 10. ОБРАБОТЧИКИ СООБЩЕНИЙ
@@ -320,45 +323,70 @@ user_data = {}
 def start_command(message):
     user_id = message.from_user.id
     
-    # ===== ПОЛНЫЙ СБРОС СОСТОЯНИЯ ПОЛЬЗОВАТЕЛЯ =====
-    # 1. Очищаем временные данные
     if user_id in user_data:
         del user_data[user_id]
-    
-    # 2. Сбрасываем кэш подписки (чтобы проверить свежий статус)
     if user_id in subscription_cache:
         del subscription_cache[user_id]
     
-    # 3. Инициализируем БД (если её нет)
     init_db()
     
-    # 4. Проверяем подписку
     if check_subscription(user_id):
         bot.send_message(
             user_id,
-            "✅ **Бот перезапущен!**\n\n"
+            "✅ Бот перезапущен!\n\n"
             "👋 Привет! Я бот-напоминалка-спамер!\n\n"
             "Я помогу тебе не забыть о важных делах.\n"
             "Используй кнопки ниже для управления:",
-            parse_mode='Markdown',
             reply_markup=get_main_keyboard()
         )
     else:
         bot.send_message(
             user_id,
-            "🔒 **Для использования бота нужно подписаться на канал!**\n\n"
+            "🔒 Для использования бота нужно подписаться на канал!\n\n"
             "Подпишись на наш канал:\n"
             f"👉 {CHANNEL_ID}\n\n"
             "После подписки нажми кнопку 'Проверить подписку'.",
-            parse_mode='Markdown',
             reply_markup=get_subscribe_keyboard()
         )
+
+# ====================================================
+# MIDDLEWARE: ПРОВЕРКА ПОДПИСКИ ПЕРЕД КАЖДЫМ СООБЩЕНИЕМ
+# ====================================================
+@bot.message_handler(func=lambda message: True, content_types=['text'])
+def check_subscription_middleware(message):
+    user_id = message.from_user.id
+    
+    if message.text and message.text.startswith('/start'):
+        return
+    
+    if not check_subscription(user_id):
+        bot.send_message(
+            user_id,
+            "🔒 Для использования бота нужно подписаться на канал!\n\n"
+            "Подпишись на наш канал:\n"
+            f"👉 {CHANNEL_ID}\n\n"
+            "После подписки нажми кнопку 'Проверить подписку'.",
+            reply_markup=get_subscribe_keyboard()
+        )
+        return
+    
+    if user_id not in user_data:
+        bot.send_message(
+            user_id,
+            "👋 Привет! Я бот-напоминалка-спамер!\n\n"
+            "Я помогу тебе не забыть о важных делах.\n"
+            "Используй кнопки ниже для управления:",
+            reply_markup=get_main_keyboard()
+        )
+        return
 
 @bot.callback_query_handler(func=lambda call: call.data == "check_subscription")
 def handle_check_subscription(call):
     user_id = call.from_user.id
+    
     if user_id in subscription_cache:
         del subscription_cache[user_id]
+    
     if check_subscription(user_id):
         bot.answer_callback_query(call.id, "✅ Подписка подтверждена!")
         bot.delete_message(call.message.chat.id, call.message.message_id)
@@ -382,9 +410,8 @@ def new_reminder_button(message):
     if not check_subscription(user_id):
         bot.send_message(
             user_id,
-            "🔒 **Подпишись на канал!**\n"
+            "🔒 Подпишись на канал!\n"
             f"👉 {CHANNEL_ID}",
-            parse_mode='Markdown',
             reply_markup=get_subscribe_keyboard()
         )
         return
@@ -395,10 +422,9 @@ def new_reminder_button(message):
     
     msg = bot.send_message(
         user_id,
-        "🌍 **Шаг 1 из 5: Выберите часовой пояс**\n\n"
-        "Укажите ваш часовой пояс, чтобы я правильно определял время.\n"
+        "Шаг 1 из 5: Выберите часовой пояс\n\n"
+        "Укажите ваш часовой пояс.\n"
         "Выберите из списка или напишите свой (например, UTC+4 или +4):",
-        parse_mode='Markdown',
         reply_markup=get_timezone_keyboard()
     )
     bot.register_next_step_handler(msg, get_timezone)
@@ -421,9 +447,8 @@ def get_timezone(message):
     user_data[user_id]['timezone'] = tz_found
     msg = bot.send_message(
         user_id,
-        "📝 **Шаг 2 из 5: Введите название напоминания**\n\n"
-        "Например: *Купить молоко* или *Позвонить маме*",
-        parse_mode='Markdown',
+        "Шаг 2 из 5: Введите название напоминания\n\n"
+        "Например: Купить молоко или Позвонить маме",
         reply_markup=get_cancel_keyboard()
     )
     bot.register_next_step_handler(msg, get_reminder_text)
@@ -444,11 +469,10 @@ def get_reminder_text(message):
     user_data[user_id]['text'] = message.text.strip()
     msg = bot.send_message(
         user_id,
-        "📅 **Шаг 3 из 5: Введите дату и время**\n\n"
-        "В формате: `ДД ММ ГГ ЧЧ ММ`\n"
-        "Например: `03 07 26 15 30` (3 июля 2026, 15:30)\n\n"
-        "⚠️ Время должно быть в будущем!",
-        parse_mode='Markdown',
+        "Шаг 3 из 5: Введите дату и время\n\n"
+        "В формате: ДД ММ ГГ ЧЧ ММ\n"
+        "Например: 03 07 26 15 30 (3 июля 2026, 15:30)\n\n"
+        "Время должно быть в будущем!",
         reply_markup=get_cancel_keyboard()
     )
     bot.register_next_step_handler(msg, get_reminder_datetime)
@@ -467,8 +491,7 @@ def get_reminder_datetime(message):
     if error:
         msg = bot.send_message(
             user_id,
-            f"❌ {error}\n\nПопробуй еще раз в формате:\n`ДД ММ ГГ ЧЧ ММ`",
-            parse_mode='Markdown',
+            f"❌ {error}\n\nПопробуй еще раз в формате: ДД ММ ГГ ЧЧ ММ",
             reply_markup=get_cancel_keyboard()
         )
         bot.register_next_step_handler(msg, get_reminder_datetime)
@@ -496,10 +519,9 @@ def get_reminder_datetime(message):
     
     msg = bot.send_message(
         user_id,
-        "⏱️ **Шаг 4 из 5: Выберите интервал спама**\n\n"
+        "Шаг 4 из 5: Выберите интервал спама\n\n"
         "Как часто я должен напоминать тебе?\n"
         "Выбери вариант ниже или напиши число в минутах:",
-        parse_mode='Markdown',
         reply_markup=get_interval_keyboard()
     )
     bot.register_next_step_handler(msg, get_spam_interval)
@@ -538,13 +560,12 @@ def get_spam_interval(message):
     
     msg = bot.send_message(
         user_id,
-        "🔄 **Шаг 5 из 5: Выберите тип повторения**\n\n"
+        "Шаг 5 из 5: Выберите тип повторения\n\n"
         "Как часто нужно повторять это напоминание?\n\n"
-        "• 📆 **Каждый месяц** - в это же число, в это же время\n"
-        "• 📅 **Каждую неделю** - в этот же день недели, в это же время\n"
-        "• 🔄 **Каждый день** - каждый день в это же время\n"
-        "• ❌ **Не повторять** - только один раз",
-        parse_mode='Markdown',
+        "📆 Каждый месяц - в это же число, в это же время\n"
+        "📅 Каждую неделю - в этот же день недели, в это же время\n"
+        "🔄 Каждый день - каждый день в это же время\n"
+        "❌ Не повторять - только один раз",
         reply_markup=get_repeat_type_keyboard()
     )
     bot.register_next_step_handler(msg, get_repeat_type)
@@ -608,14 +629,13 @@ def get_repeat_type(message):
     
     bot.send_message(
         user_id,
-        f"✅ **Напоминание создано!**\n\n"
+        f"✅ Напоминание создано!\n\n"
         f"📝 Текст: {user_data[user_id]['text']}\n"
-        f"📅 Дата и время: `{dt_local.strftime('%d.%m.%Y %H:%M')}`\n"
+        f"📅 Дата и время: {dt_local.strftime('%d.%m.%Y %H:%M')}\n"
         f"⏱️ Интервал спама: {minutes} минут(ы)\n"
-        f"🔄 Повторение: {repeat_names.get(repeat_type, '❌ Не повторять')}\n"
+        f"🔄 Повторение: {repeat_names.get(repeat_type, 'Не повторять')}\n"
         f"🌍 Часовой пояс: {user_data[user_id]['timezone']}\n\n"
-        f"В назначенное время я начну спамить тебе, пока ты не нажмешь кнопку '✅ Прочитано'.",
-        parse_mode='Markdown',
+        f"В назначенное время я начну спамить тебе, пока ты не нажмешь кнопку 'Прочитано'.",
         reply_markup=get_main_keyboard()
     )
     
@@ -634,7 +654,7 @@ def list_reminders(message):
         bot.send_message(user_id, "📭 У тебя нет активных напоминаний.", reply_markup=get_main_keyboard())
         return
     
-    text = "📋 **Твои активные напоминания:**\n\n"
+    text = "📋 Твои активные напоминания:\n\n"
     for i, (rem_id, rem_time, rem_text, interval, repeat_type, timezone) in enumerate(rows, 1):
         try:
             tz = pytz.timezone(timezone)
@@ -656,7 +676,7 @@ def list_reminders(message):
         text += f"   ⏱️ Каждые {interval//60} мин\n"
         text += f"   {repeat_names.get(repeat_type, '❌ Одноразовое')}\n\n"
     
-    bot.send_message(user_id, text, parse_mode='Markdown', reply_markup=get_main_keyboard())
+    bot.send_message(user_id, text, reply_markup=get_main_keyboard())
 
 @bot.message_handler(func=lambda message: message.text == "🗑️ Удалить напоминалку")
 def delete_reminder_button(message):
@@ -719,20 +739,12 @@ def handle_done(call):
         text, repeat_type = result
         if repeat_type != 'none':
             bot.answer_callback_query(call.id, "✅ Прочитано!")
-            
-            repeat_names = {
-                'daily': 'каждый день',
-                'weekly': 'каждую неделю',
-                'monthly': 'каждый месяц'
-            }
-            
             bot.edit_message_text(
-                f"✅ **ВЫПОЛНЕНО:** {text}\n\n"
-                f"🔄 Это {repeat_names.get(repeat_type, 'повторяющееся')} напоминание.\n"
+                f"✅ ВЫПОЛНЕНО: {text}\n\n"
+                f"🔄 Это повторяющееся напоминание.\n"
                 f"Продолжить напоминать?",
                 chat_id=call.message.chat.id,
-                message_id=call.message.message_id,
-                parse_mode='Markdown'
+                message_id=call.message.message_id
             )
             bot.send_message(
                 call.message.chat.id,
@@ -743,12 +755,13 @@ def handle_done(call):
             mark_reminder_done(reminder_id)
             bot.answer_callback_query(call.id, "✅ Отлично!")
             bot.edit_message_text(
-                f"✅ **ВЫПОЛНЕНО:** {text}",
+                f"✅ ВЫПОЛНЕНО: {text}",
                 chat_id=call.message.chat.id,
-                message_id=call.message.message_id,
-                parse_mode='Markdown'
+                message_id=call.message.message_id
             )
             bot.send_message(call.message.chat.id, "🎉 Спам остановлен! Молодец!", reply_markup=get_main_keyboard())
+    else:
+        bot.answer_callback_query(call.id, "⚠️ Напоминание уже выполнено")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("repeat_"))
 def handle_repeat(call):
@@ -804,12 +817,11 @@ def handle_repeat(call):
             
             bot.send_message(
                 user_id,
-                f"🔄 **Напоминание продлено!**\n\n"
+                f"🔄 Напоминание продлено!\n\n"
                 f"📝 Текст: {text}\n"
                 f"📅 Следующее: {next_dt.strftime('%d.%m.%Y %H:%M')}\n"
                 f"📆 Тип повторения: {repeat_names.get(repeat_type, repeat_type)}\n"
                 f"⏱️ Интервал спама: {spam_interval // 60} минут",
-                parse_mode='Markdown',
                 reply_markup=get_main_keyboard()
             )
         conn.close()
@@ -863,7 +875,7 @@ def spam_reminders():
                 
                 if seconds_since_last_spam >= spam_interval:
                     try:
-                        spam_text = f"🔔 **НАПОМИНАНИЕ!**\n\n{text}\n\n"
+                        spam_text = f"🔔 НАПОМИНАНИЕ!\n\n{text}\n\n"
                         repeat_names = {
                             'daily': '🔄 Ежедневное',
                             'weekly': '📅 Еженедельное',
@@ -872,13 +884,12 @@ def spam_reminders():
                         }
                         if repeat_type in repeat_names:
                             spam_text += f"{repeat_names[repeat_type]} напоминание.\n\n"
-                        spam_text += "_Чтобы остановить спам, нажми кнопку ниже._"
+                        spam_text += "Чтобы остановить спам, нажми кнопку ниже."
                         
                         bot.send_message(
                             user_id,
                             spam_text,
-                            reply_markup=get_spam_keyboard(rem_id),
-                            parse_mode='Markdown'
+                            reply_markup=get_spam_keyboard(rem_id)
                         )
                         update_last_spam_time(rem_id)
                         print(f"💬 Спам для напоминания #{rem_id}: '{text}'")
@@ -912,70 +923,16 @@ def webhook():
     except Exception as e:
         print(f"❌ Ошибка webhook: {e}")
         return "ERROR", 500
-# ====================================================
-# СЕКРЕТНАЯ КОМАНДА ДЛЯ СБРОСА БАЗЫ
-# ====================================================
-@bot.message_handler(commands=['resetdb'])
-def reset_database(message):
-    """Секретная команда для сброса БД (только для админа)"""
-    ADMIN_ID = 8908033185  # ЗАМЕНИ НА СВОЙ TELEGRAM ID!
-    
-    if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ У тебя нет прав на это!")
-        return
-    
-    try:
-        os.remove(DB_NAME)
-        bot.reply_to(message, "✅ База данных удалена! Создам новую при следующем запуске.")
-        # Пересоздаём БД
-        init_db()
-        bot.send_message(message.chat.id, "✅ Новая база данных создана!")
-    except Exception as e:
-        bot.reply_to(message, f"❌ Ошибка: {e}")
 
 # ====================================================
-# MIDDLEWARE: ПРОВЕРКА ПОДПИСКИ ПЕРЕД КАЖДЫМ СООБЩЕНИЕМ
-# ====================================================
-@bot.message_handler(func=lambda message: True, content_types=['text'])
-def check_subscription_middleware(message):
-    user_id = message.from_user.id
-    
-    # Пропускаем команду /start (она обрабатывается отдельно)
-    if message.text and message.text.startswith('/start'):
-        return
-    
-    # Проверяем подписку
-    if not check_subscription(user_id):
-        bot.send_message(
-            user_id,
-            "🔒 **Для использования бота нужно подписаться на канал!**\n\n"
-            "Подпишись на наш канал:\n"
-            f"👉 {CHANNEL_ID}\n\n"
-            "После подписки нажми кнопку 'Проверить подписку'.",
-            parse_mode='Markdown',
-            reply_markup=get_subscribe_keyboard()
-        )
-        return
-    
-    # Если пользователь не авторизован (нет в user_data)
-    if user_id not in user_data:
-        bot.send_message(
-            user_id,
-            "👋 Привет! Я бот-напоминалка-спамер!\n\n"
-            "Я помогу тебе не забыть о важных делах.\n"
-            "Используй кнопки ниже для управления:",
-            reply_markup=get_main_keyboard()
-        )
-        return
-        
-# ====================================================
-# 9. ЗАПУСК
+# 14. ЗАПУСК
 # ====================================================
 if __name__ == '__main__':
     print("🚀 Запускаю бота...")
+    
     init_db()
     
-    # УДАЛЯЕМ ВЕБХУК (переключаемся на polling)
+    # УДАЛЯЕМ ВЕБХУК
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteWebhook"
         response = requests.get(url)
@@ -991,7 +948,11 @@ if __name__ == '__main__':
     bot_thread = threading.Thread(target=run_bot, daemon=True)
     bot_thread.start()
     
-    # ЗАПУСКАЕМ FLASK (чтобы Render не ругался)
+    # ЗАПУСКАЕМ ФОНОВЫЙ ПОТОК СПАМЕРА
+    spam_thread = threading.Thread(target=spam_reminders, daemon=True)
+    spam_thread.start()
+    
+    # ЗАПУСКАЕМ FLASK
     port = int(os.environ.get('PORT', 10000))
     print(f"🌐 Запускаю Flask на порту {port}")
     app.run(host='0.0.0.0', port=port)
