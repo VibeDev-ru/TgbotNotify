@@ -907,7 +907,7 @@ def webhook():
 @bot.message_handler(commands=['resetdb'])
 def reset_database(message):
     """Секретная команда для сброса БД (только для админа)"""
-    ADMIN_ID = 123456789  # ЗАМЕНИ НА СВОЙ TELEGRAM ID!
+    ADMIN_ID = 8908033185  # ЗАМЕНИ НА СВОЙ TELEGRAM ID!
     
     if message.from_user.id != ADMIN_ID:
         bot.reply_to(message, "❌ У тебя нет прав на это!")
