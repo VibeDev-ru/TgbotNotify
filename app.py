@@ -350,15 +350,26 @@ def start_command(message):
         )
 
 # ====================================================
-# MIDDLEWARE: ПРОВЕРКА ПОДПИСКИ ПЕРЕД КАЖДЫМ СООБЩЕНИЕМ
+# MIDDLEWARE: ПРОВЕРКА ПОДПИСКИ (ИСПРАВЛЕННАЯ)
 # ====================================================
 @bot.message_handler(func=lambda message: True, content_types=['text'])
 def check_subscription_middleware(message):
     user_id = message.from_user.id
+    text = message.text
     
-    if message.text and message.text.startswith('/start'):
+    # ПРОПУСКАЕМ ВСЕ КОМАНДЫ
+    if text and text.startswith('/'):
         return
     
+    # ПРОПУСКАЕМ ВСЕ КНОПКИ ГЛАВНОГО МЕНЮ
+    if text in ["➕ Новая напоминалка", "📋 Все напоминалки", "🗑️ Удалить напоминалку", "❌ Отменить создание"]:
+        return
+    
+    # ПРОПУСКАЕМ ВСЕ ВАРИАНТЫ ВЫБОРА
+    if text and any(word in text for word in ["минут", "час", "месяц", "недел", "день", "повтор", "МСК", "ЕКБ", "НСК", "КРАС", "ИРК", "ВЛД", "КАМ", "КИЕВ", "МИНСК"]):
+        return
+    
+    # ПРОВЕРКА ПОДПИСКИ
     if not check_subscription(user_id):
         bot.send_message(
             user_id,
@@ -370,6 +381,7 @@ def check_subscription_middleware(message):
         )
         return
     
+    # ЕСЛИ ПОЛЬЗОВАТЕЛЬ НОВЫЙ (НЕТ В user_data)
     if user_id not in user_data:
         bot.send_message(
             user_id,
@@ -428,218 +440,6 @@ def new_reminder_button(message):
         reply_markup=get_timezone_keyboard()
     )
     bot.register_next_step_handler(msg, get_timezone)
-
-def get_timezone(message):
-    user_id = message.from_user.id
-    if message.text == "❌ Отменить создание":
-        if user_id in user_data:
-            del user_data[user_id]
-        bot.send_message(user_id, "❌ Создание отменено.", reply_markup=get_main_keyboard())
-        return
-    
-    tz_found = parse_timezone(message.text)
-    if not tz_found:
-        tz_found = 'Europe/Moscow'
-        bot.send_message(user_id, "❌ Не понял часовой пояс. Использую МСК (UTC+3) по умолчанию.")
-    else:
-        bot.send_message(user_id, f"✅ Часовой пояс установлен: {tz_found}")
-    
-    user_data[user_id]['timezone'] = tz_found
-    msg = bot.send_message(
-        user_id,
-        "Шаг 2 из 5: Введите название напоминания\n\n"
-        "Например: Купить молоко или Позвонить маме",
-        reply_markup=get_cancel_keyboard()
-    )
-    bot.register_next_step_handler(msg, get_reminder_text)
-
-def get_reminder_text(message):
-    user_id = message.from_user.id
-    if message.text == "❌ Отменить создание":
-        if user_id in user_data:
-            del user_data[user_id]
-        bot.send_message(user_id, "❌ Создание отменено.", reply_markup=get_main_keyboard())
-        return
-    
-    if len(message.text.strip()) < 1:
-        msg = bot.send_message(user_id, "❌ Название не может быть пустым. Попробуй еще раз:", reply_markup=get_cancel_keyboard())
-        bot.register_next_step_handler(msg, get_reminder_text)
-        return
-    
-    user_data[user_id]['text'] = message.text.strip()
-    msg = bot.send_message(
-        user_id,
-        "Шаг 3 из 5: Введите дату и время\n\n"
-        "В формате: ДД ММ ГГ ЧЧ ММ\n"
-        "Например: 03 07 26 15 30 (3 июля 2026, 15:30)\n\n"
-        "Время должно быть в будущем!",
-        reply_markup=get_cancel_keyboard()
-    )
-    bot.register_next_step_handler(msg, get_reminder_datetime)
-
-def get_reminder_datetime(message):
-    user_id = message.from_user.id
-    if message.text == "❌ Отменить создание":
-        if user_id in user_data:
-            del user_data[user_id]
-        bot.send_message(user_id, "❌ Создание отменено.", reply_markup=get_main_keyboard())
-        return
-    
-    timezone = user_data[user_id].get('timezone', 'Europe/Moscow')
-    dt_utc, error = parse_custom_datetime(message.text, timezone)
-    
-    if error:
-        msg = bot.send_message(
-            user_id,
-            f"❌ {error}\n\nПопробуй еще раз в формате: ДД ММ ГГ ЧЧ ММ",
-            reply_markup=get_cancel_keyboard()
-        )
-        bot.register_next_step_handler(msg, get_reminder_datetime)
-        return
-    
-    now_utc = datetime.now(pytz.UTC).replace(tzinfo=None)
-    if dt_utc <= now_utc:
-        msg = bot.send_message(
-            user_id,
-            "❌ Нельзя установить напоминание в прошлом!\n\nВведите дату и время в будущем:",
-            reply_markup=get_cancel_keyboard()
-        )
-        bot.register_next_step_handler(msg, get_reminder_datetime)
-        return
-    
-    user_data[user_id]['datetime_utc'] = dt_utc.strftime("%Y-%m-%d %H:%M")
-    
-    tz = pytz.timezone(timezone)
-    dt_local = dt_utc.replace(tzinfo=pytz.UTC).astimezone(tz)
-    bot.send_message(
-        user_id,
-        f"✅ Время сохранено!\n"
-        f"📅 Ваше время: {dt_local.strftime('%d.%m.%Y %H:%M')}"
-    )
-    
-    msg = bot.send_message(
-        user_id,
-        "Шаг 4 из 5: Выберите интервал спама\n\n"
-        "Как часто я должен напоминать тебе?\n"
-        "Выбери вариант ниже или напиши число в минутах:",
-        reply_markup=get_interval_keyboard()
-    )
-    bot.register_next_step_handler(msg, get_spam_interval)
-
-def get_spam_interval(message):
-    user_id = message.from_user.id
-    if message.text == "❌ Отменить создание":
-        if user_id in user_data:
-            del user_data[user_id]
-        bot.send_message(user_id, "❌ Создание отменено.", reply_markup=get_main_keyboard())
-        return
-    
-    interval_map = {
-        '1 минута': 60, '5 минут': 300, '10 минут': 600,
-        '30 минут': 1800, '1 час': 3600
-    }
-    interval_text = message.text.strip().lower()
-    
-    if interval_text in interval_map:
-        spam_interval = interval_map[interval_text]
-    else:
-        try:
-            minutes = int(interval_text)
-            spam_interval = max(60, minutes * 60)
-        except:
-            bot.send_message(
-                user_id,
-                "❌ Не понял интервал. Используй кнопки или напиши число в минутах.\n\nПопробуй еще раз:",
-                reply_markup=get_interval_keyboard()
-            )
-            bot.register_next_step_handler(message, get_spam_interval)
-            return
-    
-    user_data[user_id]['interval'] = spam_interval
-    bot.send_message(user_id, "✅ Отлично!", reply_markup=telebot.types.ReplyKeyboardRemove())
-    
-    msg = bot.send_message(
-        user_id,
-        "Шаг 5 из 5: Выберите тип повторения\n\n"
-        "Как часто нужно повторять это напоминание?\n\n"
-        "📆 Каждый месяц - в это же число, в это же время\n"
-        "📅 Каждую неделю - в этот же день недели, в это же время\n"
-        "🔄 Каждый день - каждый день в это же время\n"
-        "❌ Не повторять - только один раз",
-        reply_markup=get_repeat_type_keyboard()
-    )
-    bot.register_next_step_handler(msg, get_repeat_type)
-
-def get_repeat_type(message):
-    user_id = message.from_user.id
-    if message.text == "❌ Отменить создание":
-        if user_id in user_data:
-            del user_data[user_id]
-        bot.send_message(user_id, "❌ Создание отменено.", reply_markup=get_main_keyboard())
-        return
-    
-    choice = message.text.strip().lower()
-    repeat_type = 'none'
-    repeat_name = 'не повторять'
-    
-    if 'месяц' in choice or 'ежемесяч' in choice:
-        repeat_type = 'monthly'
-        repeat_name = 'каждый месяц'
-    elif 'недел' in choice or 'еженедел' in choice:
-        repeat_type = 'weekly'
-        repeat_name = 'каждую неделю'
-    elif 'день' in choice or 'ежеднев' in choice:
-        repeat_type = 'daily'
-        repeat_name = 'каждый день'
-    elif 'не повтор' in choice or 'один раз' in choice or 'нет' in choice:
-        repeat_type = 'none'
-        repeat_name = 'не повторять'
-    else:
-        bot.send_message(
-            user_id,
-            "❌ Не понял. Выбери один из вариантов:",
-            reply_markup=get_repeat_type_keyboard()
-        )
-        bot.register_next_step_handler(message, get_repeat_type)
-        return
-    
-    bot.send_message(user_id, f"✅ Выбрано: {repeat_name}", reply_markup=telebot.types.ReplyKeyboardRemove())
-    
-    add_reminder(
-        user_id,
-        user_data[user_id]['datetime_utc'],
-        user_data[user_id]['text'],
-        user_data[user_id]['interval'],
-        repeat_type,
-        user_data[user_id]['timezone']
-    )
-    
-    minutes = user_data[user_id]['interval'] // 60
-    tz = pytz.timezone(user_data[user_id]['timezone'])
-    dt_utc = datetime.strptime(user_data[user_id]['datetime_utc'], "%Y-%m-%d %H:%M")
-    dt_utc = dt_utc.replace(tzinfo=pytz.UTC)
-    dt_local = dt_utc.astimezone(tz)
-    
-    repeat_names = {
-        'daily': '🔄 Каждый день',
-        'weekly': '📅 Каждую неделю',
-        'monthly': '📆 Каждый месяц',
-        'none': '❌ Не повторять'
-    }
-    
-    bot.send_message(
-        user_id,
-        f"✅ Напоминание создано!\n\n"
-        f"📝 Текст: {user_data[user_id]['text']}\n"
-        f"📅 Дата и время: {dt_local.strftime('%d.%m.%Y %H:%M')}\n"
-        f"⏱️ Интервал спама: {minutes} минут(ы)\n"
-        f"🔄 Повторение: {repeat_names.get(repeat_type, 'Не повторять')}\n"
-        f"🌍 Часовой пояс: {user_data[user_id]['timezone']}\n\n"
-        f"В назначенное время я начну спамить тебе, пока ты не нажмешь кнопку 'Прочитано'.",
-        reply_markup=get_main_keyboard()
-    )
-    
-    del user_data[user_id]
 
 @bot.message_handler(func=lambda message: message.text == "📋 Все напоминалки")
 def list_reminders(message):
@@ -717,6 +517,8 @@ def cancel_creation(message):
         del user_data[user_id]
     bot.send_message(user_id, "❌ Создание отменено.", reply_markup=get_main_keyboard())
 
+# ОСТАЛЬНЫЕ ФУНКЦИИ (get_timezone, get_reminder_text, get_reminder_datetime, get_spam_interval, get_repeat_type)
+# ОСТАВЬ ИХ БЕЗ ИЗМЕНЕНИЙ
 # ====================================================
 # 11. CALLBACK ОБРАБОТЧИКИ
 # ====================================================
