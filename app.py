@@ -1,50 +1,123 @@
 import os
 import sys
+import subprocess
 import threading
 from flask import Flask, request
 
 # ====================================================
-# ГЛАВНЫЙ ФАЙЛ ДЛЯ RENDER.COM
+# ПРИНУДИТЕЛЬНАЯ УСТАНОВКА ЗАВИСИМОСТЕЙ
 # ====================================================
+print("📦 Проверяю установку зависимостей...")
+try:
+    import telebot
+    print("✅ telebot уже установлен")
+except ImportError:
+    print("⚠️ telebot не найден, устанавливаю...")
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"])
+    print("✅ Зависимости установлены!")
 
-# ПЫТАЕМСЯ ПРОЧИТАТЬ ТОКЕН ИЗ РАЗНЫХ ИСТОЧНИКОВ
-TELEGRAM_TOKEN = None
+# ====================================================
+# ФУНКЦИЯ ДЛЯ ПОИСКА И ОЧИСТКИ ТОКЕНА
+# ====================================================
+def find_and_clean_token():
+    """Ищет токен в разных местах и очищает от пробелов"""
+    token = None
+    
+    # 1. Проверяем переменные окружения
+    token = os.environ.get('TELEGRAM_TOKEN')
+    
+    # 2. Ищем в секретных файлах
+    if not token:
+        secret_paths = [
+            '/etc/secrets/.env',
+            '/etc/secrets/token.txt',
+            '/etc/secrets/TOKEN'
+        ]
+        for path in secret_paths:
+            try:
+                with open(path, 'r') as f:
+                    content = f.read()
+                    # Ищем строку с TELEGRAM_TOKEN
+                    for line in content.split('\n'):
+                        if 'TELEGRAM_TOKEN' in line:
+                            # Берем часть после знака =
+                            if '=' in line:
+                                token = line.split('=', 1)[1]
+                            else:
+                                token = line
+                            break
+                    # Если не нашли по ключу, берем весь контент
+                    if not token:
+                        token = content
+                    print(f"✅ Токен найден в {path}")
+                    break
+            except Exception as e:
+                print(f"⚠️ Не удалось прочитать {path}: {e}")
+    
+    # 3. Очищаем токен от ВСЕХ пробелов, переносов и табуляций
+    if token:
+        # Удаляем все виды пробелов
+        token = token.replace(' ', '')
+        token = token.replace('\n', '')
+        token = token.replace('\r', '')
+        token = token.replace('\t', '')
+        token = token.strip()
+        
+        # Если токен начинается с кавычек, убираем их
+        if token.startswith('"') and token.endswith('"'):
+            token = token[1:-1]
+        if token.startswith("'") and token.endswith("'"):
+            token = token[1:-1]
+    
+    return token
 
-# 1. Проверяем переменные окружения (обычные)
-TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
+# ====================================================
+# ПОИСК ТОКЕНА
+# ====================================================
+TELEGRAM_TOKEN = find_and_clean_token()
 
-# 2. Если не нашли, ищем в секретных файлах Render
-if not TELEGRAM_TOKEN:
-    secret_paths = [
-        '/etc/secrets/token.txt',
-        '/etc/secrets/TOKEN',
-        '/etc/secrets/.env'
-    ]
-    for path in secret_paths:
-        try:
-            with open(path, 'r') as f:
-                TELEGRAM_TOKEN = f.read().strip()
-                print(f"✅ Токен найден в {path}")
-                break
-        except:
-            pass
-
-# 3. Если не нашли, показываем понятную ошибку
 if not TELEGRAM_TOKEN:
     print("❌ ТОКЕН НЕ НАЙДЕН!")
-    print("Создай Secret File с именем 'token.txt' и вставь туда токен.")
-    print("ИЛИ добавь Environment Variable 'TELEGRAM_TOKEN'.")
+    print("Создай Secret File с именем '.env' и содержимым:")
+    print("TELEGRAM_TOKEN=твой_токен")
     raise RuntimeError("TELEGRAM_TOKEN не найден")
 
-# Импортируем бота только после того, как токен найден
+print(f"✅ Токен загружен (длина: {len(TELEGRAM_TOKEN)} символов)")
+print(f"✅ Токен начинается с: {TELEGRAM_TOKEN[:10]}...")
+
+# ====================================================
+# ИМПОРТ И НАСТРОЙКА БОТА
+# ====================================================
 import bot as bot_module
 
 # Обновляем токен в модуле бота
 bot_module.BOT_TOKEN = TELEGRAM_TOKEN
-bot_module.bot = bot_module.telebot.TeleBot(TELEGRAM_TOKEN)
-bot_module.CHANNEL_ID = os.environ.get('CHANNEL_ID', '@VibeDev_rus')
 
-# ======= FLASK-СЕРВЕР =======
+# ПЕРЕСОЗДАЕМ БОТА С ЧИСТЫМ ТОКЕНОМ
+import telebot
+bot_module.bot = telebot.TeleBot(TELEGRAM_TOKEN)
+
+# Читаем CHANNEL_ID
+CHANNEL_ID = os.environ.get('CHANNEL_ID')
+if not CHANNEL_ID:
+    try:
+        with open('/etc/secrets/.env', 'r') as f:
+            for line in f:
+                if 'CHANNEL_ID' in line:
+                    CHANNEL_ID = line.split('=', 1)[1].strip().replace(' ', '')
+                    break
+    except:
+        pass
+
+if not CHANNEL_ID:
+    CHANNEL_ID = '@VibeDev_rus'
+
+bot_module.CHANNEL_ID = CHANNEL_ID
+print(f"📢 Канал: {CHANNEL_ID}")
+
+# ====================================================
+# FLASK-СЕРВЕР
+# ====================================================
 app = Flask(__name__)
 
 @app.route('/')
@@ -57,11 +130,17 @@ def health():
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    update = bot_module.telebot.types.Update.de_json(request.stream.read().decode('utf-8'))
-    bot_module.bot.process_new_updates([update])
-    return "OK", 200
+    try:
+        update = telebot.types.Update.de_json(request.stream.read().decode('utf-8'))
+        bot_module.bot.process_new_updates([update])
+        return "OK", 200
+    except Exception as e:
+        print(f"❌ Ошибка webhook: {e}")
+        return "ERROR", 500
 
-# ======= ЗАПУСК =======
+# ====================================================
+# ЗАПУСК БОТА В ПОТОКЕ
+# ====================================================
 def run_bot():
     try:
         print("🚀 Запускаю бота...")
@@ -70,8 +149,7 @@ def run_bot():
         print(f"❌ Ошибка бота: {e}")
 
 if __name__ == '__main__':
-    print("✅ Токен загружен!")
-    print(f"📢 Канал: {bot_module.CHANNEL_ID}")
+    print("✅ Все настройки загружены!")
     
     # Запускаем бота в потоке
     bot_thread = threading.Thread(target=run_bot, daemon=True)
